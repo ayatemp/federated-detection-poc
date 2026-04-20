@@ -9,8 +9,8 @@ This module implements a conservative version of the research idea:
 * optional server-head anchoring so labeled server updates are not erased by
   noisy client pseudo labels.
 
-It is intentionally standalone so it can be dropped into the current FedSTO
-runner after the baseline reproduction finishes.
+It lives inside the DQA-CWA research folder and is used by the experiment
+runner in this directory.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ import torch
 
 
 EPS = 1e-12
+RESEARCH_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = RESEARCH_ROOT.parent
 YOLOV5_HEAD_RE = re.compile(r"(^|\.)head\.m\.\d+\.(weight|bias)$")
 CLASS_ONLY_HEAD_RE = re.compile(
     r"(^|\.)head\.(residual_m|cls_preds|cv3|classification)\.\d+.*\.(weight|bias)$"
@@ -464,7 +466,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     aggregate.add_argument("--stats", type=Path, required=True)
     aggregate.add_argument("--state", type=Path, required=True)
     aggregate.add_argument("--out", type=Path, required=True)
-    aggregate.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parent)
+    aggregate.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     aggregate.add_argument("--num-classes", type=int, default=10)
     aggregate.add_argument("--classwise-blend", type=float, default=0.75)
     aggregate.add_argument("--temperature", type=float, default=1.50)

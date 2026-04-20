@@ -57,3 +57,11 @@ mlruns/
 */efficientteacher_fedsto/client_states/
 */efficientteacher_fedsto/data_lists/*.cache
 */efficientteacher_fedsto/data_lists/*.json
+
+# DQA-CWA generated experiment outputs
+*/efficientteacher_dqa_cwa/runs/
+*/efficientteacher_dqa_cwa/weights/
+*/efficientteacher_dqa_cwa/global_checkpoints/
+*/efficientteacher_dqa_cwa/client_states/
+*/efficientteacher_dqa_cwa/data_lists/*.cache
+*/efficientteacher_dqa_cwa/data_lists/*.json
