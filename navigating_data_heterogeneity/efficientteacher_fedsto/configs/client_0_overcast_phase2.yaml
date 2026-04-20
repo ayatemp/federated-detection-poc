@@ -1,0 +1,130 @@
+project: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/runs
+name: client_0_overcast_phase2
+exist_ok: true
+device: ''
+adam: false
+epochs: 1
+weights: ''
+prune_finetune: false
+linear_lr: true
+find_unused_parameters: true
+hyp:
+  lr0: 0.01
+  lrf: 1.0
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  scale: 0.9
+  burn_epochs: 0
+  no_aug_epochs: 0
+  mixup: 0.1
+Model:
+  depth_multiple: 1.0
+  width_multiple: 1.0
+  Backbone:
+    name: YoloV5
+    activation: SiLU
+  Neck:
+    name: YoloV5
+    in_channels:
+    - 256
+    - 512
+    - 1024
+    out_channels:
+    - 256
+    - 512
+    - 1024
+    activation: SiLU
+  Head:
+    name: YoloV5
+    activation: SiLU
+  anchors:
+  - - 10
+    - 13
+    - 16
+    - 30
+    - 33
+    - 23
+  - - 30
+    - 61
+    - 62
+    - 45
+    - 59
+    - 119
+  - - 116
+    - 90
+    - 156
+    - 198
+    - 373
+    - 326
+Loss:
+  type: ComputeLoss
+  cls: 0.3
+  obj: 0.7
+  anchor_t: 4.0
+Dataset:
+  data_name: bdd100k_fedsto
+  train: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_train.txt
+  val: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_val.txt
+  test: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_val.txt
+  nc: 10
+  np: 0
+  names:
+  - person
+  - rider
+  - car
+  - bus
+  - truck
+  - bike
+  - motor
+  - traffic light
+  - traffic sign
+  - train
+  img_size: 640
+  batch_size: 32
+  workers: 0
+  target: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/client_0_overcast_target.txt
+FedSTO:
+  train_scope: all
+  orthogonal_weight: 0.0001
+  orthogonal_scope: non_backbone
+  unlabeled_only_client: true
+SSOD:
+  train_domain: true
+  nms_conf_thres: 0.1
+  nms_iou_thres: 0.65
+  teacher_loss_weight: 1.0
+  cls_loss_weight: 0.3
+  box_loss_weight: 0.05
+  obj_loss_weight: 0.7
+  loss_type: ComputeStudentMatchLoss
+  ignore_thres_low: 0.1
+  ignore_thres_high: 0.6
+  uncertain_aug: true
+  use_ota: false
+  multi_label: false
+  ignore_obj: false
+  pseudo_label_with_obj: true
+  pseudo_label_with_bbox: true
+  pseudo_label_with_cls: false
+  with_da_loss: false
+  da_loss_weights: 0.01
+  epoch_adaptor: true
+  resample_high_percent: 0.25
+  resample_low_percent: 0.99
+  ema_rate: 0.999
+  cosine_ema: true
+  imitate_teacher: false
+  ssod_hyp:
+    with_gt: false
+    mosaic: 1.0
+    cutout: 0.5
+    autoaugment: 0.5
+    scale: 0.8
+    degrees: 0.0
+    shear: 0.0

@@ -1,0 +1,11 @@
+{
+  "server_warmup": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/server_warmup_yolov5l_bdd100k.yaml",
+  "client_0_phase1": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_0_overcast_phase1.yaml",
+  "client_0_phase2": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_0_overcast_phase2.yaml",
+  "client_1_phase1": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_1_rainy_phase1.yaml",
+  "client_1_phase2": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_1_rainy_phase2.yaml",
+  "client_2_phase1": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_2_snowy_phase1.yaml",
+  "client_2_phase2": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/client_2_snowy_phase2.yaml",
+  "server_phase1": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/server_phase1_backbone.yaml",
+  "server_phase2": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/configs/server_phase2_orthogonal.yaml"
+}

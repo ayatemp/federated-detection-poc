@@ -1,0 +1,97 @@
+project: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/runs
+name: server_warmup
+exist_ok: true
+device: ''
+adam: false
+epochs: 50
+weights: ''
+prune_finetune: false
+linear_lr: true
+find_unused_parameters: true
+hyp:
+  lr0: 0.01
+  lrf: 1.0
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  scale: 0.9
+  burn_epochs: 0
+  no_aug_epochs: 0
+  mixup: 0.1
+Model:
+  depth_multiple: 1.0
+  width_multiple: 1.0
+  Backbone:
+    name: YoloV5
+    activation: SiLU
+  Neck:
+    name: YoloV5
+    in_channels:
+    - 256
+    - 512
+    - 1024
+    out_channels:
+    - 256
+    - 512
+    - 1024
+    activation: SiLU
+  Head:
+    name: YoloV5
+    activation: SiLU
+  anchors:
+  - - 10
+    - 13
+    - 16
+    - 30
+    - 33
+    - 23
+  - - 30
+    - 61
+    - 62
+    - 45
+    - 59
+    - 119
+  - - 116
+    - 90
+    - 156
+    - 198
+    - 373
+    - 326
+Loss:
+  type: ComputeLoss
+  cls: 0.3
+  obj: 0.7
+  anchor_t: 4.0
+Dataset:
+  data_name: bdd100k_fedsto
+  train: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_train.txt
+  val: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_val.txt
+  test: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_val.txt
+  nc: 10
+  np: 0
+  names:
+  - person
+  - rider
+  - car
+  - bus
+  - truck
+  - bike
+  - motor
+  - traffic light
+  - traffic sign
+  - train
+  img_size: 640
+  batch_size: 32
+  workers: 0
+FedSTO:
+  train_scope: all
+  orthogonal_weight: 0.0
+  orthogonal_scope: non_backbone
+  unlabeled_only_client: false
+SSOD:
+  train_domain: false
