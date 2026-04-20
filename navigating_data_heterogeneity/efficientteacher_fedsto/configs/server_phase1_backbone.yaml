@@ -6,7 +6,7 @@ adam: false
 epochs: 1
 weights: ''
 prune_finetune: false
-linear_lr: true
+linear_lr: false
 find_unused_parameters: true
 hyp:
   lr0: 0.01

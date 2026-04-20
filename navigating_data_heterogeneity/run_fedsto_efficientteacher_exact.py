@@ -221,27 +221,37 @@ def run_protocol(args: argparse.Namespace) -> None:
     CLIENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     config_device = "" if args.gpus > 1 else args.device
 
-    warmup_cfg = setup.write_config(
-        "runtime_server_warmup.yaml",
-        setup.efficientteacher_config(
-            name="runtime_server_warmup",
-            train=setup.LIST_ROOT / "server_cloudy_train.txt",
-            val=setup.LIST_ROOT / "server_cloudy_val.txt",
-            target=None,
-            weights=str(pretrained.resolve()),
-            epochs=args.warmup_epochs,
-            train_scope="all",
-            batch_size=args.batch_size,
-            workers=args.workers,
-            device=config_device,
-        ),
-    )
-    global_ckpt = run_train(warmup_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+    current_global = GLOBAL_DIR / "round000_warmup.pt"
+    if not args.dry_run and current_global.exists() and not args.force_warmup:
+        ok, reason = validate_checkpoint(current_global)
+        if ok:
+            print(f"Reusing completed warm-up checkpoint: {current_global}")
+        else:
+            print(f"Warm-up checkpoint exists but is invalid ({reason}); rerunning warm-up.")
+            current_global.unlink()
+
+    if args.dry_run or not current_global.exists():
+        warmup_cfg = setup.write_config(
+            "runtime_server_warmup.yaml",
+            setup.efficientteacher_config(
+                name="runtime_server_warmup",
+                train=setup.LIST_ROOT / "server_cloudy_train.txt",
+                val=setup.LIST_ROOT / "server_cloudy_val.txt",
+                target=None,
+                weights=str(pretrained.resolve()),
+                epochs=args.warmup_epochs,
+                train_scope="all",
+                batch_size=args.batch_size,
+                workers=args.workers,
+                device=config_device,
+            ),
+        )
+        global_ckpt = run_train(warmup_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+        if not args.dry_run:
+            make_start_checkpoint(global_ckpt, current_global)
     if args.dry_run:
         print("Dry run complete. Commands/configs are generated; no training was executed.")
         return
-    current_global = GLOBAL_DIR / "round000_warmup.pt"
-    make_start_checkpoint(global_ckpt, current_global)
 
     history = []
     for phase, rounds in [(1, args.phase1_rounds), (2, args.phase2_rounds)]:
@@ -304,6 +314,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", type=int, default=1, help="Number of GPUs for torch.distributed.run. Use 2 on a 2x RTX 6000 Ada node.")
     parser.add_argument("--master-port", type=int, default=29500, help="DDP master port for torch.distributed.run.")
     parser.add_argument("--device", default="")
+    parser.add_argument("--force-warmup", action="store_true", help="Rerun warm-up even if round000_warmup.pt already exists.")
     args = parser.parse_args()
     return args
 

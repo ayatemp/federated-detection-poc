@@ -9,7 +9,12 @@ __pycache__/
 *.png
 *.jpg
 *.jpeg
-
+*.yaml
+*.csv
+*.json
+*.zip
+*.tar.gz
+*.pdf
 
 # Logs / cache
 *.log
