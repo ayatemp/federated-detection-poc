@@ -18,6 +18,7 @@ PRETRAINED_URL = "https://github.com/AlibabaResearch/efficientteacher/releases/d
 PRETRAINED_PATH = setup.WORK_ROOT / "weights" / "efficient-yolov5l.pt"
 GLOBAL_DIR = setup.WORK_ROOT / "global_checkpoints"
 CLIENT_STATE_DIR = setup.WORK_ROOT / "client_states"
+HISTORY_PATH = setup.WORK_ROOT / "history.json"
 
 
 def ensure_efficientteacher_import_path() -> None:
@@ -45,6 +46,73 @@ def validate_checkpoint(path: Path) -> tuple[bool, str]:
     if "model" not in checkpoint:
         return False, "missing 'model' key"
     return True, "ok"
+
+
+def checkpoint_present(path: Path) -> bool:
+    return path.exists() and path.stat().st_size >= 1024 * 1024
+
+
+def load_history() -> list[dict]:
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Could not parse {HISTORY_PATH}: {exc}") from exc
+    if not isinstance(history, list):
+        raise RuntimeError(f"Expected {HISTORY_PATH} to contain a list, got {type(history).__name__}")
+    return history
+
+
+def write_history(history: list[dict]) -> None:
+    HISTORY_PATH.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+
+def completed_history_prefix(
+    history: list[dict],
+    *,
+    phase1_rounds: int,
+    phase2_rounds: int,
+    warmup_checkpoint: Path,
+) -> tuple[list[dict], Path, tuple[int, int] | None]:
+    """Return the continuous completed prefix and the next phase/round to run."""
+    by_round: dict[tuple[int, int], dict] = {}
+    for entry in history:
+        try:
+            key = (int(entry["phase"]), int(entry["round"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        by_round.setdefault(key, entry)
+
+    normalized: list[dict] = []
+    current_global = warmup_checkpoint
+    for phase, rounds in [(1, phase1_rounds), (2, phase2_rounds)]:
+        for round_idx in range(1, rounds + 1):
+            entry = by_round.get((phase, round_idx))
+            global_path = Path(entry.get("global", "")) if entry else None
+            if global_path is not None and checkpoint_present(global_path):
+                current_global = global_path
+                normalized.append(
+                    {
+                        "phase": phase,
+                        "round": round_idx,
+                        "global": str(global_path.resolve()),
+                    }
+                )
+                continue
+            return normalized, current_global, (phase, round_idx)
+    return normalized, current_global, None
+
+
+def reuse_checkpoint_if_valid(path: Path, description: str, *, force_retrain: bool) -> Path | None:
+    if force_retrain or not checkpoint_present(path):
+        return None
+    ok, reason = validate_checkpoint(path)
+    if ok:
+        print(f"Reusing completed {description}: {path}")
+        return path
+    print(f"Existing {description} checkpoint is invalid ({reason}); rerunning.")
+    return None
 
 
 def download_pretrained(force: bool = False) -> Path:
@@ -221,38 +289,103 @@ def run_protocol(args: argparse.Namespace) -> None:
     CLIENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     config_device = "" if args.gpus > 1 else args.device
 
-    warmup_cfg = setup.write_config(
-        "runtime_server_warmup.yaml",
-        setup.efficientteacher_config(
-            name="runtime_server_warmup",
-            train=setup.LIST_ROOT / "server_cloudy_train.txt",
-            val=setup.LIST_ROOT / "server_cloudy_val.txt",
-            target=None,
-            weights=str(pretrained.resolve()),
-            epochs=args.warmup_epochs,
-            train_scope="all",
-            batch_size=args.batch_size,
-            workers=args.workers,
-            device=config_device,
-        ),
-    )
-    global_ckpt = run_train(warmup_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+    current_global = GLOBAL_DIR / "round000_warmup.pt"
+    if not args.dry_run and current_global.exists() and not args.force_warmup:
+        ok, reason = validate_checkpoint(current_global)
+        if ok:
+            print(f"Reusing completed warm-up checkpoint: {current_global}")
+        else:
+            print(f"Warm-up checkpoint exists but is invalid ({reason}); rerunning warm-up.")
+            current_global.unlink()
+
+    if args.dry_run or not current_global.exists():
+        warmup_cfg = setup.write_config(
+            "runtime_server_warmup.yaml",
+            setup.efficientteacher_config(
+                name="runtime_server_warmup",
+                train=setup.LIST_ROOT / "server_cloudy_train.txt",
+                val=setup.LIST_ROOT / "server_cloudy_val.txt",
+                target=None,
+                weights=str(pretrained.resolve()),
+                epochs=args.warmup_epochs,
+                train_scope="all",
+                batch_size=args.batch_size,
+                workers=args.workers,
+                device=config_device,
+            ),
+        )
+        global_ckpt = run_train(warmup_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+        if not args.dry_run:
+            make_start_checkpoint(global_ckpt, current_global)
     if args.dry_run:
         print("Dry run complete. Commands/configs are generated; no training was executed.")
         return
-    current_global = GLOBAL_DIR / "round000_warmup.pt"
-    make_start_checkpoint(global_ckpt, current_global)
 
-    history = []
+    if args.force_restart:
+        history = []
+        print("Ignoring existing history because --force-restart was set.")
+    else:
+        loaded_history = load_history()
+        history, current_global, next_round = completed_history_prefix(
+            loaded_history,
+            phase1_rounds=args.phase1_rounds,
+            phase2_rounds=args.phase2_rounds,
+            warmup_checkpoint=current_global,
+        )
+        if loaded_history != history:
+            write_history(history)
+        if next_round is None:
+            total_rounds = args.phase1_rounds + args.phase2_rounds
+            print(f"All requested federated rounds are already complete ({total_rounds}/{total_rounds}).")
+            print(f"Latest global checkpoint: {current_global}")
+            return
+        if history:
+            phase, round_idx = next_round
+            print(
+                f"Resuming after {len(history)} completed federated rounds "
+                f"from phase {phase} round {round_idx}."
+            )
+            print(f"Current global checkpoint: {current_global}")
+        else:
+            print("No completed federated rounds found; starting from phase 1 round 1.")
+
+    completed = {(int(entry["phase"]), int(entry["round"])) for entry in history}
     for phase, rounds in [(1, args.phase1_rounds), (2, args.phase2_rounds)]:
         for round_idx in range(1, rounds + 1):
+            if (phase, round_idx) in completed:
+                continue
+            next_global = GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_global.pt"
+            reused_global = reuse_checkpoint_if_valid(
+                next_global,
+                f"global checkpoint for phase {phase} round {round_idx}",
+                force_retrain=args.force_retrain,
+            )
+            if reused_global is not None:
+                current_global = reused_global
+                history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+                write_history(history)
+                completed.add((phase, round_idx))
+                print(f"Recovered phase {phase} round {round_idx} from existing global checkpoint.")
+                continue
+
             local_paths = []
             for client in setup.CLIENTS:
                 target = setup.LIST_ROOT / f"client_{client['id']}_{client['weather']}_target.txt"
                 start = CLIENT_STATE_DIR / f"client_{client['id']}_phase{phase}_round{round_idx:03d}_start.pt"
                 previous = CLIENT_STATE_DIR / f"client_{client['id']}_latest.pt"
-                make_start_checkpoint(current_global, start, previous)
                 run_name = f"phase{phase}_round{round_idx:03d}_client{client['id']}_{client['weather']}"
+                ckpt = reuse_checkpoint_if_valid(
+                    checkpoint_path(run_name),
+                    f"client run {run_name}",
+                    force_retrain=args.force_retrain,
+                )
+                if ckpt is not None:
+                    local_paths.append(ckpt)
+                    make_start_checkpoint(ckpt, previous)
+                    continue
+
+                if not checkpoint_present(start):
+                    make_start_checkpoint(current_global, start, previous)
                 cfg = write_runtime_config(
                     run_name,
                     target=target,
@@ -269,26 +402,33 @@ def run_protocol(args: argparse.Namespace) -> None:
                 make_start_checkpoint(ckpt, previous)
 
             server_start = GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt"
-            make_start_checkpoint(current_global, server_start)
             server_name = f"phase{phase}_round{round_idx:03d}_server"
-            server_cfg = write_runtime_config(
-                server_name,
-                target=None,
-                weights=server_start,
-                phase=phase,
-                role="server",
-                round_idx=round_idx,
-                batch_size=args.batch_size,
-                workers=args.workers,
-                device=config_device,
+            server_ckpt = reuse_checkpoint_if_valid(
+                checkpoint_path(server_name),
+                f"server run {server_name}",
+                force_retrain=args.force_retrain,
             )
-            server_ckpt = run_train(server_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+            if server_ckpt is None:
+                if not checkpoint_present(server_start):
+                    make_start_checkpoint(current_global, server_start)
+                server_cfg = write_runtime_config(
+                    server_name,
+                    target=None,
+                    weights=server_start,
+                    phase=phase,
+                    role="server",
+                    round_idx=round_idx,
+                    batch_size=args.batch_size,
+                    workers=args.workers,
+                    device=config_device,
+                )
+                server_ckpt = run_train(server_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
 
-            next_global = GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_global.pt"
             aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=(phase == 1))
             current_global = next_global
             history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
-            (setup.WORK_ROOT / "history.json").write_text(json.dumps(history, indent=2), encoding="utf-8")
+            write_history(history)
+            completed.add((phase, round_idx))
             print(f"Completed phase {phase} round {round_idx}: {current_global}")
 
 
@@ -304,6 +444,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", type=int, default=1, help="Number of GPUs for torch.distributed.run. Use 2 on a 2x RTX 6000 Ada node.")
     parser.add_argument("--master-port", type=int, default=29500, help="DDP master port for torch.distributed.run.")
     parser.add_argument("--device", default="")
+    parser.add_argument("--force-warmup", action="store_true", help="Rerun warm-up even if round000_warmup.pt already exists.")
+    parser.add_argument("--force-restart", action="store_true", help="Ignore history.json and start federated rounds from phase 1 round 1.")
+    parser.add_argument("--force-retrain", action="store_true", help="Rerun train jobs even when their last.pt checkpoints already exist.")
     args = parser.parse_args()
     return args
 
