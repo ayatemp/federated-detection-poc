@@ -192,7 +192,10 @@ def efficientteacher_config(
         "epochs": epochs,
         "weights": weights,
         "prune_finetune": False,
-        "linear_lr": True,
+        # EfficientTeacher's linear scheduler divides by (epochs - 1).
+        # FedSTO local rounds are 1 epoch, so use the cosine helper there,
+        # which is constant because lrf is 1.0 below.
+        "linear_lr": epochs > 1,
         "find_unused_parameters": True,
         "hyp": {
             "lr0": 0.01,
