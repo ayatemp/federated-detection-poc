@@ -3,10 +3,10 @@ name: runtime_server_warmup
 exist_ok: true
 device: ''
 adam: false
-epochs: 50
+epochs: 1
 weights: /app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/weights/efficient-yolov5l.pt
 prune_finetune: false
-linear_lr: true
+linear_lr: false
 find_unused_parameters: true
 hyp:
   lr0: 0.01
@@ -86,7 +86,7 @@ Dataset:
   - traffic sign
   - train
   img_size: 640
-  batch_size: 64
+  batch_size: 32
   workers: 0
 FedSTO:
   train_scope: all

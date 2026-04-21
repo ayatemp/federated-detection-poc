@@ -1,9 +1,9 @@
 {
   "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
   "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
-  "official_ssfod_sha": null,
+  "official_ssfod_sha": "def1d63e77b62734dc067b118513d5e51e209df6",
   "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
-  "efficientteacher_sha": null,
+  "efficientteacher_sha": "def1d63e77b62734dc067b118513d5e51e209df6",
   "server": {
     "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
     "train_list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_train.txt",
