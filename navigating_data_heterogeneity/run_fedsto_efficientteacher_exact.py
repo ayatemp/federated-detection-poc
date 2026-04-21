@@ -115,6 +115,57 @@ def reuse_checkpoint_if_valid(path: Path, description: str, *, force_retrain: bo
     return None
 
 
+def _remove_file(path: Path) -> tuple[int, int]:
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return 0, 0
+    path.unlink()
+    return 1, size
+
+
+def cleanup_round_intermediates(phase: int, round_idx: int) -> tuple[int, int]:
+    removed = 0
+    freed = 0
+    for client in setup.CLIENTS:
+        run_name = f"phase{phase}_round{round_idx:03d}_client{client['id']}_{client['weather']}"
+        weights_dir = checkpoint_path(run_name).parent
+        for filename in ("last.pt", "best.pt"):
+            count, size = _remove_file(weights_dir / filename)
+            removed += count
+            freed += size
+        count, size = _remove_file(CLIENT_STATE_DIR / f"client_{client['id']}_phase{phase}_round{round_idx:03d}_start.pt")
+        removed += count
+        freed += size
+
+    server_name = f"phase{phase}_round{round_idx:03d}_server"
+    server_weights_dir = checkpoint_path(server_name).parent
+    for filename in ("last.pt", "best.pt"):
+        count, size = _remove_file(server_weights_dir / filename)
+        removed += count
+        freed += size
+    count, size = _remove_file(GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt")
+    removed += count
+    freed += size
+    return removed, freed
+
+
+def cleanup_completed_intermediates(history: list[dict]) -> None:
+    removed = 0
+    freed = 0
+    for entry in history:
+        try:
+            phase = int(entry["phase"])
+            round_idx = int(entry["round"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        count, size = cleanup_round_intermediates(phase, round_idx)
+        removed += count
+        freed += size
+    if removed:
+        print(f"Cleaned {removed} completed-round intermediate checkpoint files ({freed / 1024 ** 3:.2f} GiB).")
+
+
 def download_pretrained(force: bool = False) -> Path:
     PRETRAINED_PATH.parent.mkdir(parents=True, exist_ok=True)
     if PRETRAINED_PATH.exists() and not force:
@@ -349,6 +400,9 @@ def run_protocol(args: argparse.Namespace) -> None:
         else:
             print("No completed federated rounds found; starting from phase 1 round 1.")
 
+    if not args.keep_intermediate_checkpoints:
+        cleanup_completed_intermediates(history)
+
     completed = {(int(entry["phase"]), int(entry["round"])) for entry in history}
     for phase, rounds in [(1, args.phase1_rounds), (2, args.phase2_rounds)]:
         for round_idx in range(1, rounds + 1):
@@ -366,6 +420,8 @@ def run_protocol(args: argparse.Namespace) -> None:
                 write_history(history)
                 completed.add((phase, round_idx))
                 print(f"Recovered phase {phase} round {round_idx} from existing global checkpoint.")
+                if not args.keep_intermediate_checkpoints:
+                    cleanup_round_intermediates(phase, round_idx)
                 continue
 
             local_paths = []
@@ -430,6 +486,8 @@ def run_protocol(args: argparse.Namespace) -> None:
             write_history(history)
             completed.add((phase, round_idx))
             print(f"Completed phase {phase} round {round_idx}: {current_global}")
+            if not args.keep_intermediate_checkpoints:
+                cleanup_round_intermediates(phase, round_idx)
 
 
 def parse_args() -> argparse.Namespace:
@@ -447,6 +505,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-warmup", action="store_true", help="Rerun warm-up even if round000_warmup.pt already exists.")
     parser.add_argument("--force-restart", action="store_true", help="Ignore history.json and start federated rounds from phase 1 round 1.")
     parser.add_argument("--force-retrain", action="store_true", help="Rerun train jobs even when their last.pt checkpoints already exist.")
+    parser.add_argument(
+        "--keep-intermediate-checkpoints",
+        action="store_true",
+        help="Keep per-run last/best weights and per-round start checkpoints after a global round is complete.",
+    )
     args = parser.parse_args()
     return args
 
