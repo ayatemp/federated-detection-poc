@@ -12,6 +12,20 @@ def _parameter_in_scope(name, scope):
     return False
 
 
+def _spectral_norm_power_iteration(matrix, iterations=3):
+    size = matrix.shape[0]
+    if size == 0:
+        return matrix.new_zeros(())
+    with torch.no_grad():
+        vector = torch.arange(1, size + 1, device=matrix.device, dtype=matrix.dtype).unsqueeze(1)
+        vector = torch.nn.functional.normalize(vector, dim=0, eps=1e-12)
+        detached = matrix.detach()
+        for _ in range(iterations):
+            vector = detached.matmul(vector)
+            vector = torch.nn.functional.normalize(vector, dim=0, eps=1e-12)
+    return matrix.matmul(vector).norm()
+
+
 def spectral_orthogonal_regularization(model, weight=0.0, scope="non_backbone"):
     if weight <= 0:
         return None
@@ -24,8 +38,9 @@ def spectral_orthogonal_regularization(model, weight=0.0, scope="non_backbone"):
         matrix = param.float().reshape(param.shape[0], -1)
         if matrix.numel() == 0:
             continue
-        singular_values = torch.linalg.svdvals(matrix)
-        layer_penalty = torch.max(torch.abs(singular_values.square() - 1.0))
+        gram = matrix.matmul(matrix.transpose(0, 1))
+        gram = gram - torch.eye(gram.shape[0], device=gram.device, dtype=gram.dtype)
+        layer_penalty = _spectral_norm_power_iteration(gram)
         penalty = layer_penalty if penalty is None else penalty + layer_penalty
         count += 1
 
