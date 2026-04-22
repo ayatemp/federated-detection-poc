@@ -37,6 +37,18 @@ dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa_cwa/
 dynamic_quality_aware_classwise_aggregation/stats/
 ```
 
+## Run Safety
+
+The runner is restartable and disk-conscious by default:
+
+- `history.json` is used to resume from the last continuous completed round.
+- Existing valid `last.pt` / global checkpoints are reused after interruption.
+- Completed-round intermediate `last.pt`, `best.pt`, and start checkpoints are deleted after each global checkpoint is written.
+- Full EfficientTeacher training output is appended to `efficientteacher_dqa_cwa/dqa_cwa_latest.log` so notebooks stay responsive.
+- `--min-free-gib` defaults to `80`; if free space drops below that, the runner cleans completed intermediates and then stops with a clear error instead of failing inside `torch.save`.
+
+Use `--keep-intermediate-checkpoints` only when you intentionally need every per-run checkpoint for debugging. Use `--stream-train-output` only when running outside a notebook and you want the raw training logs in the terminal.
+
 ## Dry Run
 
 ```bash
@@ -84,19 +96,29 @@ cls x y w h confidence
 image_id cls x y w h confidence
 ```
 
-## Full Run
+## 24-Hour Pilot Defaults
+
+The default runner settings target a roughly 24-hour pilot on a 2x RTX 6000 Ada node:
+
+```bash
+python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py
+```
+
+This is equivalent to:
 
 ```bash
 python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py \
-  --warmup-epochs 50 \
-  --phase1-rounds 100 \
-  --phase2-rounds 150 \
+  --warmup-epochs 20 \
+  --phase1-rounds 40 \
+  --phase2-rounds 60 \
   --batch-size 64 \
   --workers 0 \
-  --gpus 2
+  --gpus 2 \
+  --min-free-gib 80
 ```
+
+For paper-scale reproduction, override these with `--warmup-epochs 50 --phase1-rounds 100 --phase2-rounds 150`.
 
 By default, DQA-CWA starts in phase 2. If a required stats file is missing, the
 runner stops instead of silently pretending the proposed method ran. For smoke
 tests only, pass `--fallback-fedavg-without-stats`.
-
