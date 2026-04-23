@@ -96,9 +96,9 @@ cls x y w h confidence
 image_id cls x y w h confidence
 ```
 
-## 24-Hour Pilot Defaults
+## Fast Pilot Defaults
 
-The default runner settings target a roughly 24-hour pilot on a 2x RTX 6000 Ada node:
+The default runner settings target a roughly 10-12 hour pilot on a 2x RTX 6000 Ada node:
 
 ```bash
 python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py
@@ -108,16 +108,16 @@ This is equivalent to:
 
 ```bash
 python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py \
-  --warmup-epochs 20 \
-  --phase1-rounds 40 \
-  --phase2-rounds 60 \
+  --warmup-epochs 8 \
+  --phase1-rounds 15 \
+  --phase2-rounds 35 \
   --batch-size 64 \
   --workers 0 \
   --gpus 2 \
   --min-free-gib 80
 ```
 
-For paper-scale reproduction, override these with `--warmup-epochs 50 --phase1-rounds 100 --phase2-rounds 150`.
+For a more stable 24-hour pilot, override these with `--warmup-epochs 20 --phase1-rounds 40 --phase2-rounds 60`. For paper-scale reproduction, override these with `--warmup-epochs 50 --phase1-rounds 100 --phase2-rounds 150`.
 
 By default, DQA-CWA starts in phase 2. If a required stats file is missing, the
 runner stops instead of silently pretending the proposed method ran. For smoke
