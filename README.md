@@ -1,6 +1,6 @@
 # Federated Detection POC
 
-![Federated Detection POC banner](assets/federated-detection-poc-banner.svg)
+![Federated Detection POC banner](assets/image.png)
 
 This repository is a research workspace for privacy-preserving object detection
 with federated learning. It brings together a production-style FedSTO
@@ -71,7 +71,7 @@ Notebook entry points:
 │   ├── run_fedsto_efficientteacher_exact.py
 │   └── setup_fedsto_exact_reproduction.py
 └── assets/
-    └── federated-detection-poc-banner.svg
+    └── image.png
 ```
 
 ## What The Notebooks Give You
