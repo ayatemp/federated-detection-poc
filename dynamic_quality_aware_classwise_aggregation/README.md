@@ -49,6 +49,7 @@ Notebook entry points:
 ```text
 dynamic_quality_aware_classwise_aggregation/01_dqa_cwa_reproduction.ipynb
 dynamic_quality_aware_classwise_aggregation/02_dqa_cwa_exact_reproduction.ipynb
+dynamic_quality_aware_classwise_aggregation/02_2_dqa_cwa_14h_reproduction.ipynb
 ```
 
 ## Run Safety
@@ -75,7 +76,7 @@ To refresh the notebook after edits:
 python3 dynamic_quality_aware_classwise_aggregation/generate_dqa_cwa_notebook.py
 ```
 
-The `01` notebook is the fast pilot path. The `02` notebook is the paper-scale path and uses its own workspace (`efficientteacher_dqa_cwa_exact`) and stats directory (`stats_exact`) so it does not collide with the pilot run.
+The `01` notebook is the fast pilot path. The `02` notebook is the paper-scale path and uses its own workspace (`efficientteacher_dqa_cwa_exact`) and stats directory (`stats_exact`) so it does not collide with the pilot run. The `02_2` notebook is the same-day middle path, tuned from the completed FedSTO runtime log to target roughly 13-14 hours in its own workspace (`efficientteacher_dqa_cwa_14h`) and stats directory (`stats_14h`).
 
 ## Stats Format
 

@@ -48,6 +48,7 @@ def build_notebook(
     min_free_gib: int,
     mode_heading: str,
     mode_description: str,
+    estimate_note: str | None = None,
 ) -> None:
     cells = [
         md(
@@ -154,6 +155,18 @@ def build_notebook(
             }}
             """
         ),
+    ]
+    if estimate_note:
+        cells.append(
+            md(
+                f"""
+                ## Runtime Estimate
+
+                {estimate_note}
+                """
+            )
+        )
+    cells.extend([
         md(
             """
             ## 2. Build the Shared Data Interface
@@ -523,7 +536,7 @@ def build_notebook(
             display(pd.DataFrame(artifact_rows))
             """
         ),
-    ]
+    ])
 
     notebook = {
         "cells": cells,
@@ -563,6 +576,7 @@ def main() -> None:
         min_free_gib=80,
         mode_heading="Pilot Configuration",
         mode_description="The defaults below match the fast true-DQA pilot we have been using: roughly 10-12 hours on a 2x RTX 6000 Ada node.",
+        estimate_note="This pilot is the quickest way to see whether true DQA is behaving sensibly. It trades paper-scale coverage for shorter turnaround.",
     )
     build_notebook(
         notebook_title="02 DQA-CWA Exact Reproduction",
@@ -581,6 +595,26 @@ def main() -> None:
         min_free_gib=80,
         mode_heading="Exact-Reproduction Configuration",
         mode_description="These defaults target the paper-scale run: 50 warm-up epochs, 100 phase-1 rounds, and 150 phase-2 rounds. This notebook uses a separate workspace and stats directory so it does not mix with the faster 01 pilot run.",
+        estimate_note="Using the FedSTO full reproduction log as a baseline, this paper-scale path is roughly a 46-48 hour clean run on the same 2x RTX 6000 Ada setup, and longer if interruptions force retries.",
+    )
+    build_notebook(
+        notebook_title="02_2 DQA-CWA 14h Reproduction",
+        notebook_path=ROOT / "02_2_dqa_cwa_14h_reproduction.ipynb",
+        workspace_name="efficientteacher_dqa_cwa_14h",
+        stats_dir_name="stats_14h",
+        runner_log_name="dqa_cwa_14h_runner.out",
+        pid_file_name="dqa_cwa_14h_runner.pid",
+        warmup_epochs=15,
+        phase1_rounds=20,
+        phase2_rounds=50,
+        batch_size=64,
+        workers=0,
+        gpus=2,
+        master_port=29512,
+        min_free_gib=80,
+        mode_heading="13-14 Hour Configuration",
+        mode_description="These defaults are calibrated from the completed FedSTO log to land near a same-day result on the same hardware, while still leaving enough phase-2 rounds for DQA behavior to show up.",
+        estimate_note="FedSTO logged 50 warm-up epochs in 0.982 hours, phase-1 rounds at about 10.46 minutes each, and phase-2 rounds at about 11.17 minutes each. With 15 warm-up epochs, 20 phase-1 rounds, and 50 phase-2 rounds, the clean-run estimate is about 13.1 hours before modest DQA overhead, so this notebook is aimed at a practical 13-14 hour turnaround.",
     )
 
 
