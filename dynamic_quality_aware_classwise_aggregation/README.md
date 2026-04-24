@@ -29,6 +29,7 @@ The implementation also keeps the method conservative:
 - `dqa_cwa_aggregation.py`: core reliability scoring and class-wise head aggregation
 - `run_dqa_cwa_fedsto.py`: FedSTO-style runner that stores generated outputs in this directory
 - `collect_pseudo_stats.py`: converts pseudo-label dumps into round-level stats JSON
+- `generate_dqa_cwa_notebook.py`: writes a notebook that can launch, monitor, and evaluate DQA the same way `03_fedsto_exact_reproduction.ipynb` does for FedSTO
 
 Generated files are written under:
 
@@ -41,6 +42,12 @@ Paper-style evaluation is available through:
 
 ```text
 dynamic_quality_aware_classwise_aggregation/evaluate_paper_protocol.py
+```
+
+Notebook entry point:
+
+```text
+dynamic_quality_aware_classwise_aggregation/01_dqa_cwa_reproduction.ipynb
 ```
 
 ## Run Safety
@@ -59,6 +66,12 @@ Use `--keep-intermediate-checkpoints` only when you intentionally need every per
 
 ```bash
 python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py --dry-run
+```
+
+To refresh the notebook after edits:
+
+```bash
+python3 dynamic_quality_aware_classwise_aggregation/generate_dqa_cwa_notebook.py
 ```
 
 ## Stats Format

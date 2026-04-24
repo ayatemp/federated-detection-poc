@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -50,6 +52,10 @@ def _prepare_fedsto_modules():
 
 def _stats_path(root: Path, phase: int, round_idx: int) -> Path:
     return root / f"phase{phase}_round{round_idx:03d}.json"
+
+
+def _client_stats_path(root: Path, phase: int, round_idx: int, client: dict) -> Path:
+    return root / f"phase{phase}_round{round_idx:03d}_client{client['id']}.json"
 
 
 def _dqa_config(args: argparse.Namespace) -> AggregationConfig:
@@ -155,11 +161,14 @@ def ensure_disk_space(
     )
 
 
-def run_train(fedsto, config: Path, args: argparse.Namespace) -> Path:
+def run_train(
+    fedsto,
+    config: Path,
+    args: argparse.Namespace,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> Path:
     """Run EfficientTeacher while keeping notebook/stdout output compact by default."""
-    if args.stream_train_output or args.dry_run:
-        return fedsto.run_train(config, args.dry_run, gpus=args.gpus, master_port=args.master_port)
-
     if args.gpus > 1:
         cmd = [
             sys.executable,
@@ -177,14 +186,36 @@ def run_train(fedsto, config: Path, args: argparse.Namespace) -> Path:
         cmd = [sys.executable, "train.py", "--cfg", str(config.resolve())]
 
     print(" ".join(cmd))
-    args.log_file.parent.mkdir(parents=True, exist_ok=True)
-    with args.log_file.open("a", encoding="utf-8") as log:
-        log.write("\n" + "=" * 100 + "\n")
-        log.write(" ".join(cmd) + "\n")
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    if args.dry_run:
+        cfg_name = config.stem
+        if cfg_name.startswith("runtime_phase"):
+            with config.open(encoding="utf-8") as f:
+                import yaml
+
+                run_name = yaml.safe_load(f)["name"]
+        else:
+            run_name = cfg_name
+        return fedsto.checkpoint_path(run_name)
+
+    if args.stream_train_output:
         try:
-            subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
+            subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, check=True)
         except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
+            raise RuntimeError(f"Training failed for {config}") from exc
+    else:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        with args.log_file.open("a", encoding="utf-8") as log:
+            log.write("\n" + "=" * 100 + "\n")
+            log.write(" ".join(cmd) + "\n")
+            try:
+                subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
+
+        print(f"Training output appended to {args.log_file}")
 
     cfg_name = config.stem
     if cfg_name.startswith("runtime_phase"):
@@ -194,8 +225,25 @@ def run_train(fedsto, config: Path, args: argparse.Namespace) -> Path:
             run_name = yaml.safe_load(f)["name"]
     else:
         run_name = cfg_name
-    print(f"Training output appended to {args.log_file}")
     return fedsto.checkpoint_path(run_name)
+
+
+def build_round_stats_from_clients(args: argparse.Namespace, phase: int, round_idx: int, setup) -> Path | None:
+    round_stats = _stats_path(args.stats_root, phase, round_idx)
+    client_entries = []
+    for client in setup.CLIENTS:
+        client_stats = _client_stats_path(args.stats_root, phase, round_idx, client)
+        if not client_stats.exists():
+            return None
+        payload = json.loads(client_stats.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "clients" in payload:
+            client_entries.extend(payload["clients"])
+        else:
+            client_entries.append(payload)
+
+    round_stats.parent.mkdir(parents=True, exist_ok=True)
+    round_stats.write_text(json.dumps({"clients": client_entries}, indent=2), encoding="utf-8")
+    return round_stats
 
 
 def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace, dqa_state: Path) -> None:
@@ -351,11 +399,19 @@ def run_protocol(args: argparse.Namespace) -> None:
                 start = fedsto.CLIENT_STATE_DIR / f"client_{client['id']}_phase{phase}_round{round_idx:03d}_start.pt"
                 previous = fedsto.CLIENT_STATE_DIR / f"client_{client['id']}_latest.pt"
                 run_name = _dqa_run_name(phase, round_idx, client)
+                client_stats = _client_stats_path(args.stats_root, phase, round_idx, client)
+                stats_required = phase >= args.dqa_start_phase and not args.fallback_fedavg_without_stats
                 ckpt = fedsto.reuse_checkpoint_if_valid(
                     fedsto.checkpoint_path(run_name),
                     f"DQA-CWA client run {run_name}",
                     force_retrain=args.force_retrain,
                 )
+                if ckpt is not None and stats_required and not client_stats.exists():
+                    print(
+                        f"Existing client run {run_name} checkpoint is usable but pseudo-label stats are missing "
+                        f"({client_stats}); rerunning this client to produce DQA stats."
+                    )
+                    ckpt = None
                 if ckpt is not None:
                     local_paths.append(ckpt)
                     fedsto.make_start_checkpoint(ckpt, previous)
@@ -374,7 +430,17 @@ def run_protocol(args: argparse.Namespace) -> None:
                     workers=args.workers,
                     device=config_device,
                 )
-                ckpt = run_train(fedsto, cfg, args)
+                extra_env = None
+                if phase >= args.dqa_start_phase:
+                    extra_env = {
+                        "DQA_PSEUDO_STATS_OUT": str(client_stats.resolve()),
+                        "DQA_CLIENT_ID": str(client["id"]),
+                        "DQA_PHASE": str(phase),
+                        "DQA_ROUND": str(round_idx),
+                    }
+                    if client_stats.exists():
+                        client_stats.unlink()
+                ckpt = run_train(fedsto, cfg, args, extra_env=extra_env)
                 local_paths.append(ckpt)
                 fedsto.make_start_checkpoint(ckpt, previous)
 
@@ -411,6 +477,8 @@ def run_protocol(args: argparse.Namespace) -> None:
             )
             if phase >= args.dqa_start_phase:
                 stats_file = _stats_path(args.stats_root, phase, round_idx)
+                if not stats_file.exists():
+                    stats_file = build_round_stats_from_clients(args, phase, round_idx, setup) or stats_file
                 if not stats_file.exists():
                     if not args.fallback_fedavg_without_stats:
                         raise FileNotFoundError(
