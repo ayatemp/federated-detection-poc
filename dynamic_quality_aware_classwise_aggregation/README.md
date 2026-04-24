@@ -44,10 +44,11 @@ Paper-style evaluation is available through:
 dynamic_quality_aware_classwise_aggregation/evaluate_paper_protocol.py
 ```
 
-Notebook entry point:
+Notebook entry points:
 
 ```text
 dynamic_quality_aware_classwise_aggregation/01_dqa_cwa_reproduction.ipynb
+dynamic_quality_aware_classwise_aggregation/02_dqa_cwa_exact_reproduction.ipynb
 ```
 
 ## Run Safety
@@ -73,6 +74,8 @@ To refresh the notebook after edits:
 ```bash
 python3 dynamic_quality_aware_classwise_aggregation/generate_dqa_cwa_notebook.py
 ```
+
+The `01` notebook is the fast pilot path. The `02` notebook is the paper-scale path and uses its own workspace (`efficientteacher_dqa_cwa_exact`) and stats directory (`stats_exact`) so it does not collide with the pilot run.
 
 ## Stats Format
 

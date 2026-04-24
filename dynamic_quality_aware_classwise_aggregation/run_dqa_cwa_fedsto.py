@@ -29,24 +29,24 @@ from dqa_cwa_aggregation import (
 RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
-DQA_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_dqa_cwa"
+DEFAULT_DQA_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_dqa_cwa"
 
 
-def _prepare_fedsto_modules():
+def _prepare_fedsto_modules(work_root: Path):
     if str(NAV_ROOT) not in sys.path:
         sys.path.insert(0, str(NAV_ROOT))
 
     setup = importlib.import_module("setup_fedsto_exact_reproduction")
-    setup.WORK_ROOT = DQA_WORK_ROOT
-    setup.LIST_ROOT = DQA_WORK_ROOT / "data_lists"
-    setup.CONFIG_ROOT = DQA_WORK_ROOT / "configs"
-    setup.RUN_ROOT = DQA_WORK_ROOT / "runs"
+    setup.WORK_ROOT = work_root
+    setup.LIST_ROOT = work_root / "data_lists"
+    setup.CONFIG_ROOT = work_root / "configs"
+    setup.RUN_ROOT = work_root / "runs"
 
     fedsto = importlib.import_module("run_fedsto_efficientteacher_exact")
-    fedsto.PRETRAINED_PATH = DQA_WORK_ROOT / "weights" / "efficient-yolov5l.pt"
-    fedsto.GLOBAL_DIR = DQA_WORK_ROOT / "global_checkpoints"
-    fedsto.CLIENT_STATE_DIR = DQA_WORK_ROOT / "client_states"
-    fedsto.HISTORY_PATH = DQA_WORK_ROOT / "history.json"
+    fedsto.PRETRAINED_PATH = work_root / "weights" / "efficient-yolov5l.pt"
+    fedsto.GLOBAL_DIR = work_root / "global_checkpoints"
+    fedsto.CLIENT_STATE_DIR = work_root / "client_states"
+    fedsto.HISTORY_PATH = work_root / "history.json"
     return setup, fedsto
 
 
@@ -282,7 +282,7 @@ def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace
 
 
 def run_protocol(args: argparse.Namespace) -> None:
-    setup, fedsto = _prepare_fedsto_modules()
+    setup, fedsto = _prepare_fedsto_modules(args.workspace_root)
     setup.build_base_configs()
     pretrained = fedsto.PRETRAINED_PATH if args.dry_run else fedsto.download_pretrained()
     if not args.dry_run:
@@ -292,11 +292,11 @@ def run_protocol(args: argparse.Namespace) -> None:
     fedsto.CLIENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     args.stats_root.mkdir(parents=True, exist_ok=True)
     if args.log_file is None:
-        args.log_file = DQA_WORK_ROOT / "dqa_cwa_latest.log"
+        args.log_file = args.workspace_root / "dqa_cwa_latest.log"
     if not args.dry_run and not args.append_train_log and args.log_file.exists():
         args.log_file.unlink()
     config_device = "" if args.gpus > 1 else args.device
-    ensure_disk_space(DQA_WORK_ROOT, args.min_free_gib)
+    ensure_disk_space(args.workspace_root, args.min_free_gib)
 
     current_global = fedsto.GLOBAL_DIR / "round000_warmup.pt"
     if not args.dry_run and current_global.exists() and not args.force_warmup:
@@ -328,10 +328,10 @@ def run_protocol(args: argparse.Namespace) -> None:
             fedsto.make_start_checkpoint(global_ckpt, current_global)
 
     if args.dry_run:
-        print(f"Dry run complete. DQA-CWA workspace: {DQA_WORK_ROOT}")
+        print(f"Dry run complete. DQA-CWA workspace: {args.workspace_root}")
         return
 
-    dqa_state = args.dqa_state or (DQA_WORK_ROOT / "dqa_cwa_state.json")
+    dqa_state = args.dqa_state or (args.workspace_root / "dqa_cwa_state.json")
     if args.force_restart:
         history = []
         print("Ignoring existing DQA-CWA history because --force-restart was set.")
@@ -370,7 +370,7 @@ def run_protocol(args: argparse.Namespace) -> None:
             if (phase, round_idx) in completed:
                 continue
             ensure_disk_space(
-                DQA_WORK_ROOT,
+                args.workspace_root,
                 args.min_free_gib,
                 setup=setup,
                 fedsto=fedsto,
@@ -468,7 +468,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                 server_ckpt = run_train(fedsto, server_cfg, args)
 
             ensure_disk_space(
-                DQA_WORK_ROOT,
+                args.workspace_root,
                 args.min_free_gib,
                 setup=setup,
                 fedsto=fedsto,
@@ -513,6 +513,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setup-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--workspace-root", type=Path, default=DEFAULT_DQA_WORK_ROOT)
     parser.add_argument("--warmup-epochs", type=int, default=8)
     parser.add_argument("--phase1-rounds", type=int, default=15)
     parser.add_argument("--phase2-rounds", type=int, default=35)
@@ -558,6 +559,6 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     parsed = parse_args()
     if parsed.setup_only:
-        _prepare_fedsto_modules()[0].build_base_configs()
+        _prepare_fedsto_modules(parsed.workspace_root)[0].build_base_configs()
     else:
         run_protocol(parsed)

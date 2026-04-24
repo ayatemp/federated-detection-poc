@@ -64,5 +64,5 @@ mlruns/
 */efficientteacher_dqa_cwa/validation_reports/
 */efficientteacher_dqa_cwa/data_lists/*.cache
 */efficientteacher_dqa_cwa/data_lists/*.json
-dynamic_quality_aware_classwise_aggregation/dqa_cwa_runner.out
-dynamic_quality_aware_classwise_aggregation/dqa_cwa_runner.pid
+dynamic_quality_aware_classwise_aggregation/dqa_cwa*_runner.out
+dynamic_quality_aware_classwise_aggregation/dqa_cwa*_runner.pid
