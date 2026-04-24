@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import subprocess
 from pathlib import Path
@@ -33,6 +34,13 @@ CLIENTS = [
     {"id": 0, "weather": "overcast"},
     {"id": 1, "weather": "rainy"},
     {"id": 2, "weather": "snowy"},
+]
+
+PAPER_EVAL_SPLITS = [
+    {"name": "cloudy", "raw_weather": "partly cloudy"},
+    {"name": "overcast", "raw_weather": "overcast"},
+    {"name": "rainy", "raw_weather": "rainy"},
+    {"name": "snowy", "raw_weather": "snowy"},
 ]
 
 
@@ -114,6 +122,17 @@ def _write_list(path: Path, images: list[Path]) -> None:
         cache_path.unlink()
 
 
+def _prune_stale_entries(path: Path, keep_names: set[str]) -> None:
+    if not path.exists():
+        return
+    for entry in path.iterdir():
+        if entry.name in keep_names:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            raise RuntimeError(f"Unexpected directory under paper-eval assets: {entry}")
+        entry.unlink()
+
+
 def _git_sha(path: Path) -> str | None:
     try:
         result = subprocess.run(
@@ -126,6 +145,94 @@ def _git_sha(path: Path) -> str | None:
     except Exception:
         return None
     return result.stdout.strip()
+
+
+def build_paper_eval_lists() -> dict:
+    import prepare_bdd100k_for_fedsto as prep
+    from PIL import Image
+
+    raw_root = prep.dataset_root()
+    val_root = prep.image_root(raw_root, "val")
+    val_records = prep.load_records(raw_root, "val")
+    eval_root = WORK_ROOT / "paper_eval"
+
+    splits = []
+    total_images: list[Path] = []
+
+    for spec in PAPER_EVAL_SPLITS:
+        split_name = spec["name"]
+        raw_weather = spec["raw_weather"]
+        selected = prep.select_records(
+            val_records,
+            "weather",
+            raw_weather,
+            None,
+            require_yolo_labels=True,
+            image_dir=val_root,
+        )
+
+        image_dir = eval_root / split_name / "images" / "val"
+        label_dir = eval_root / split_name / "labels" / "val"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        label_dir.mkdir(parents=True, exist_ok=True)
+
+        keep_images: set[str] = set()
+        keep_labels: set[str] = set()
+        image_paths: list[Path] = []
+        class_counts: Counter[str] = Counter()
+        num_boxes = 0
+
+        for record in selected:
+            src = val_root / record["name"]
+            if not src.exists():
+                continue
+            with Image.open(src) as img:
+                lines = prep.mapped_yolo_lines(record, img.size)
+            if not lines:
+                continue
+
+            dst_image = image_dir / record["name"]
+            prep.link_or_copy(src, dst_image, symlink=True)
+
+            dst_label = label_dir / f"{Path(record['name']).stem}.txt"
+            dst_label.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            image_paths.append(dst_image)
+            keep_images.add(dst_image.name)
+            keep_labels.add(dst_label.name)
+            num_boxes += len(lines)
+            for line in lines:
+                class_counts[BDD_NAMES[int(line.split()[0])]] += 1
+
+        _prune_stale_entries(image_dir, keep_images)
+        _prune_stale_entries(label_dir, keep_labels)
+
+        list_path = LIST_ROOT / f"paper_eval_{split_name}_val.txt"
+        _write_list(list_path, image_paths)
+        splits.append(
+            {
+                "name": split_name,
+                "raw_weather": raw_weather,
+                "list": str(list_path.resolve()),
+                "images": len(image_paths),
+                "boxes": num_boxes,
+                "class_counts": dict(class_counts),
+            }
+        )
+        total_images.extend(image_paths)
+
+    total_list = LIST_ROOT / "paper_eval_total_val.txt"
+    total_images = sorted(total_images)
+    _write_list(total_list, total_images)
+    return {
+        "splits": splits,
+        "total": {
+            "name": "total",
+            "list": str(total_list.resolve()),
+            "images": len(total_images),
+            "source_splits": [spec["name"] for spec in PAPER_EVAL_SPLITS],
+        },
+    }
 
 
 def build_data_lists() -> dict:
@@ -148,6 +255,8 @@ def build_data_lists() -> dict:
         _write_list(list_path, imgs)
         clients.append({**client, "list": str(list_path.resolve()), "images": len(imgs)})
 
+    paper_evaluation = build_paper_eval_lists()
+
     manifest = {
         "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
         "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
@@ -162,6 +271,7 @@ def build_data_lists() -> dict:
             "val_images": len(server_val),
         },
         "clients": clients,
+        "paper_evaluation": paper_evaluation,
         "classes": BDD_NAMES,
         "paper_schedule": {"warmup_epochs": 50, "phase1_rounds": 100, "phase2_rounds": 150, "local_epochs": 1},
     }
@@ -261,7 +371,8 @@ def efficientteacher_config(
             "ignore_obj": False,
             "pseudo_label_with_obj": True,
             "pseudo_label_with_bbox": True,
-            "pseudo_label_with_cls": False,
+            # The paper objective includes Lu_cls, so keep pseudo-label cls loss on.
+            "pseudo_label_with_cls": True,
             "with_da_loss": False,
             "da_loss_weights": 0.01,
             "epoch_adaptor": True,

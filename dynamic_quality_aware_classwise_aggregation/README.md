@@ -37,6 +37,12 @@ dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa_cwa/
 dynamic_quality_aware_classwise_aggregation/stats/
 ```
 
+Paper-style evaluation is available through:
+
+```text
+dynamic_quality_aware_classwise_aggregation/evaluate_paper_protocol.py
+```
+
 ## Run Safety
 
 The runner is restartable and disk-conscious by default:
@@ -122,3 +128,32 @@ For a more stable 24-hour pilot, override these with `--warmup-epochs 20 --phase
 By default, DQA-CWA starts in phase 2. If a required stats file is missing, the
 runner stops instead of silently pretending the proposed method ran. For smoke
 tests only, pass `--fallback-fedavg-without-stats`.
+
+## Paper-Style Evaluation
+
+The DQA runner reuses `setup_fedsto_exact_reproduction.py`, so it inherits the
+same paper-alignment fixes as the FedSTO baseline:
+
+- pseudo-label classification loss is enabled (`Lu_cls`-side mismatch reduced)
+- per-weather labeled validation splits are materialized for `cloudy`,
+  `overcast`, `rainy`, `snowy`, plus `total`
+
+After a run, evaluate DQA checkpoints with the shared paper-style protocol:
+
+```bash
+python3 dynamic_quality_aware_classwise_aggregation/evaluate_paper_protocol.py
+```
+
+This writes results under:
+
+```text
+dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa_cwa/validation_reports/
+```
+
+You can also target specific checkpoints or splits, for example:
+
+```bash
+python3 dynamic_quality_aware_classwise_aggregation/evaluate_paper_protocol.py \
+  --splits cloudy,total \
+  --checkpoint final=dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa_cwa/global_checkpoints/phase2_round035_global.pt
+```
