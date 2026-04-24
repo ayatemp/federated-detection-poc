@@ -1,5 +1,7 @@
 # Dynamic Quality-Aware Class-wise Aggregation
 
+![DQA-CWA banner](../assets/DQA.png)
+
 This directory contains the runnable scaffold for the DQA-CWA research idea.
 It is intentionally separate from `navigating_data_heterogeneity` so the FedSTO
 baseline can keep running unchanged.
