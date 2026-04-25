@@ -111,7 +111,7 @@ SSOD:
   ignore_obj: false
   pseudo_label_with_obj: true
   pseudo_label_with_bbox: true
-  pseudo_label_with_cls: false
+  pseudo_label_with_cls: true
   with_da_loss: false
   da_loss_weights: 0.01
   epoch_adaptor: true

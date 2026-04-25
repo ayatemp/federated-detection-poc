@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the FedSTO reproduction with DQA-CWA aggregation in phase 2.
+"""Run the corrected DQA-CWA protocol on the FedSTO/EfficientTeacher setup.
 
 The script mirrors navigating_data_heterogeneity/run_fedsto_efficientteacher_exact.py
 but writes generated configs, runs, checkpoints, and aggregation state under this
@@ -30,6 +30,7 @@ RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DEFAULT_DQA_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_dqa_cwa"
+DQA_PROTOCOL_VERSION = "dqa_cwa_alg1_server_after_dynamic_client_aggregation_v1"
 
 
 def _prepare_fedsto_modules(work_root: Path):
@@ -110,6 +111,9 @@ def cleanup_round_intermediates(setup, fedsto, phase: int, round_idx: int) -> tu
         removed += count
         freed += size
     count, size = _remove_file(fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt")
+    removed += count
+    freed += size
+    count, size = _remove_file(fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_dqa_client_aggregate.pt")
     removed += count
     freed += size
     return removed, freed
@@ -342,6 +346,7 @@ def run_protocol(args: argparse.Namespace) -> None:
             phase1_rounds=args.phase1_rounds,
             phase2_rounds=args.phase2_rounds,
             warmup_checkpoint=current_global,
+            expected_protocol=args.protocol_version,
         )
         if loaded_history != history:
             fedsto.write_history(history)
@@ -382,10 +387,18 @@ def run_protocol(args: argparse.Namespace) -> None:
                 next_global,
                 f"DQA-CWA global checkpoint for phase {phase} round {round_idx}",
                 force_retrain=args.force_retrain,
+                expected_protocol=args.protocol_version,
             )
             if reused_global is not None:
                 current_global = reused_global
-                history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+                history.append(
+                    {
+                        "phase": phase,
+                        "round": round_idx,
+                        "global": str(current_global.resolve()),
+                        "protocol": args.protocol_version,
+                    }
+                )
                 fedsto.write_history(history)
                 completed.add((phase, round_idx))
                 print(f"Recovered DQA-CWA phase {phase} round {round_idx} from existing global checkpoint.")
@@ -405,6 +418,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                     fedsto.checkpoint_path(run_name),
                     f"DQA-CWA client run {run_name}",
                     force_retrain=args.force_retrain,
+                    expected_protocol=args.protocol_version,
                 )
                 if ckpt is not None and stats_required and not client_stats.exists():
                     print(
@@ -414,11 +428,22 @@ def run_protocol(args: argparse.Namespace) -> None:
                     ckpt = None
                 if ckpt is not None:
                     local_paths.append(ckpt)
-                    fedsto.make_start_checkpoint(ckpt, previous)
+                    fedsto.make_start_checkpoint(
+                        ckpt,
+                        previous,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_client_{client['id']}_latest",
+                    )
                     continue
 
-                if not fedsto.checkpoint_present(start):
-                    fedsto.make_start_checkpoint(current_global, start, previous)
+                if not fedsto.checkpoint_matches_protocol(start, args.protocol_version):
+                    fedsto.make_start_checkpoint(
+                        current_global,
+                        start,
+                        previous,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_phase{phase}_round{round_idx:03d}_client{client['id']}_start",
+                    )
                 cfg = fedsto.write_runtime_config(
                     run_name,
                     target=target,
@@ -441,8 +466,50 @@ def run_protocol(args: argparse.Namespace) -> None:
                     if client_stats.exists():
                         client_stats.unlink()
                 ckpt = run_train(fedsto, cfg, args, extra_env=extra_env)
+                if not args.dry_run:
+                    fedsto.mark_checkpoint_protocol(
+                        ckpt,
+                        args.protocol_version,
+                        f"dqa_phase{phase}_round{round_idx:03d}_client{client['id']}",
+                    )
                 local_paths.append(ckpt)
-                fedsto.make_start_checkpoint(ckpt, previous)
+                fedsto.make_start_checkpoint(
+                    ckpt,
+                    previous,
+                    protocol=args.protocol_version,
+                    stage=f"dqa_client_{client['id']}_latest",
+                )
+
+            aggregate_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_dqa_client_aggregate.pt"
+            if phase >= args.dqa_start_phase:
+                stats_file = _stats_path(args.stats_root, phase, round_idx)
+                if not stats_file.exists():
+                    stats_file = build_round_stats_from_clients(args, phase, round_idx, setup) or stats_file
+                if not stats_file.exists():
+                    if not args.fallback_fedavg_without_stats:
+                        raise FileNotFoundError(
+                            f"Missing DQA-CWA stats file: {stats_file}. "
+                            "DQA is enabled for every post-warmup round; fix stats export before continuing."
+                        )
+                    fedsto.aggregate_checkpoints(local_paths, current_global, aggregate_start, backbone_only=False)
+                else:
+                    stats = load_round_stats(stats_file, args.num_classes)
+                    aggregate_checkpoints(
+                        client_checkpoints=local_paths,
+                        server_checkpoint=current_global,
+                        output_checkpoint=aggregate_start,
+                        stats=stats,
+                        state_path=dqa_state,
+                        config=_dqa_config(args),
+                        repo_root=REPO_ROOT,
+                    )
+            else:
+                fedsto.aggregate_checkpoints(local_paths, current_global, aggregate_start, backbone_only=(phase == 1))
+            fedsto.mark_checkpoint_protocol(
+                aggregate_start,
+                args.protocol_version,
+                f"dqa_phase{phase}_round{round_idx:03d}_client_aggregate",
+            )
 
             server_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt"
             server_name = _dqa_run_name(phase, round_idx)
@@ -450,10 +517,16 @@ def run_protocol(args: argparse.Namespace) -> None:
                 fedsto.checkpoint_path(server_name),
                 f"DQA-CWA server run {server_name}",
                 force_retrain=args.force_retrain,
+                expected_protocol=args.protocol_version,
             )
             if server_ckpt is None:
-                if not fedsto.checkpoint_present(server_start):
-                    fedsto.make_start_checkpoint(current_global, server_start)
+                if not fedsto.checkpoint_matches_protocol(server_start, args.protocol_version):
+                    fedsto.make_start_checkpoint(
+                        aggregate_start,
+                        server_start,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_phase{phase}_round{round_idx:03d}_server_start",
+                    )
                 server_cfg = fedsto.write_runtime_config(
                     server_name,
                     target=None,
@@ -466,6 +539,12 @@ def run_protocol(args: argparse.Namespace) -> None:
                     device=config_device,
                 )
                 server_ckpt = run_train(fedsto, server_cfg, args)
+                if not args.dry_run:
+                    fedsto.mark_checkpoint_protocol(
+                        server_ckpt,
+                        args.protocol_version,
+                        f"dqa_phase{phase}_round{round_idx:03d}_server_update",
+                    )
 
             ensure_disk_space(
                 args.workspace_root,
@@ -475,33 +554,21 @@ def run_protocol(args: argparse.Namespace) -> None:
                 history=history,
                 keep_intermediates=args.keep_intermediate_checkpoints,
             )
-            if phase >= args.dqa_start_phase:
-                stats_file = _stats_path(args.stats_root, phase, round_idx)
-                if not stats_file.exists():
-                    stats_file = build_round_stats_from_clients(args, phase, round_idx, setup) or stats_file
-                if not stats_file.exists():
-                    if not args.fallback_fedavg_without_stats:
-                        raise FileNotFoundError(
-                            f"Missing DQA-CWA stats file: {stats_file}. "
-                            "Create it with collect_pseudo_stats.py or pass --fallback-fedavg-without-stats."
-                        )
-                    fedsto.aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=False)
-                else:
-                    stats = load_round_stats(stats_file, args.num_classes)
-                    aggregate_checkpoints(
-                        client_checkpoints=local_paths,
-                        server_checkpoint=server_ckpt,
-                        output_checkpoint=next_global,
-                        stats=stats,
-                        state_path=dqa_state,
-                        config=_dqa_config(args),
-                        repo_root=REPO_ROOT,
-                    )
-            else:
-                fedsto.aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=(phase == 1))
-
+            fedsto.make_start_checkpoint(
+                server_ckpt,
+                next_global,
+                protocol=args.protocol_version,
+                stage=f"dqa_phase{phase}_round{round_idx:03d}_global_after_server_update",
+            )
             current_global = next_global
-            history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+            history.append(
+                {
+                    "phase": phase,
+                    "round": round_idx,
+                    "global": str(current_global.resolve()),
+                    "protocol": args.protocol_version,
+                }
+            )
             fedsto.write_history(history)
             completed.add((phase, round_idx))
             print(f"Completed DQA-CWA phase {phase} round {round_idx}: {current_global}")
@@ -541,8 +608,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stream-train-output", action="store_true", help="Stream full EfficientTeacher output to stdout instead of compact logging.")
     parser.add_argument("--stats-root", type=Path, default=RESEARCH_ROOT / "stats")
     parser.add_argument("--dqa-state", type=Path, default=None)
-    parser.add_argument("--dqa-start-phase", type=int, default=2)
+    parser.add_argument(
+        "--dqa-start-phase",
+        type=int,
+        default=1,
+        help="First federated phase that uses DQA aggregation. Default 1 means every post-warmup round is DQA.",
+    )
     parser.add_argument("--fallback-fedavg-without-stats", action="store_true")
+    parser.add_argument("--protocol-version", default=DQA_PROTOCOL_VERSION)
     parser.add_argument("--num-classes", type=int, default=10)
     parser.add_argument("--count-ema", type=float, default=0.70)
     parser.add_argument("--quality-ema", type=float, default=0.70)

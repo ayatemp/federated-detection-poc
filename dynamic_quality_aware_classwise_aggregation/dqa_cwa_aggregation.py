@@ -384,21 +384,30 @@ def aggregate_checkpoints(
     server_ckpt = _load_checkpoint(server_checkpoint, repo_root)
     base = copy.deepcopy(server_ckpt)
 
-    source_ckpts = client_ckpts + [server_ckpt]
-    source_state_dicts = [_model_state_dict(ckpt, "model") for ckpt in source_ckpts]
-    dynamic_state_dicts = source_state_dicts if len(source_ids) == len(source_state_dicts) else source_state_dicts[: len(source_ids)]
+    client_state_dicts = [_model_state_dict(ckpt, "model") for ckpt in client_ckpts]
+    server_state_dict = _model_state_dict(server_ckpt, "model")
+    dynamic_state_dicts = (
+        client_state_dicts + [server_state_dict]
+        if len(source_ids) == len(client_state_dicts) + 1
+        else client_state_dicts[: len(source_ids)]
+    )
     base_state = _model_state_dict(base, "model")
 
-    averaged = _fedavg_state_dicts(source_state_dicts, base_state)
+    averaged = _fedavg_state_dicts(client_state_dicts, base_state)
     dynamic = apply_dynamic_classwise_head(averaged, dynamic_state_dicts, alpha, active, config)
     _replace_model_state(base, dynamic, "model")
 
     if base.get("ema") is not None:
-        ema_source_dicts = [_model_state_dict(ckpt, "ema") for ckpt in source_ckpts if ckpt.get("ema") is not None]
-        if len(ema_source_dicts) == len(source_ckpts):
-            ema_dynamic_dicts = ema_source_dicts if len(source_ids) == len(ema_source_dicts) else ema_source_dicts[: len(source_ids)]
+        ema_client_dicts = [_model_state_dict(ckpt, "ema") for ckpt in client_ckpts if ckpt.get("ema") is not None]
+        server_ema = _model_state_dict(server_ckpt, "ema") if server_ckpt.get("ema") is not None else None
+        if len(ema_client_dicts) == len(client_ckpts) and server_ema is not None:
+            ema_dynamic_dicts = (
+                ema_client_dicts + [server_ema]
+                if len(source_ids) == len(ema_client_dicts) + 1
+                else ema_client_dicts[: len(source_ids)]
+            )
             ema_base = _model_state_dict(base, "ema")
-            ema_avg = _fedavg_state_dicts(ema_source_dicts, ema_base)
+            ema_avg = _fedavg_state_dicts(ema_client_dicts, ema_base)
             ema_dynamic = apply_dynamic_classwise_head(ema_avg, ema_dynamic_dicts, alpha, active, config)
             _replace_model_state(base, ema_dynamic, "ema")
 

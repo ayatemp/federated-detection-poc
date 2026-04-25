@@ -93,6 +93,8 @@ def background_run_code(run_default: bool) -> dict:
         str(PHASE1_ROUNDS),
         "--phase2-rounds",
         str(PHASE2_ROUNDS),
+        "--dqa-start-phase",
+        str(DQA_START_PHASE),
         "--batch-size",
         str(BATCH_SIZE),
         "--workers",
@@ -202,6 +204,8 @@ def blocking_run_code(run_default: bool) -> dict:
         str(PHASE1_ROUNDS),
         "--phase2-rounds",
         str(PHASE2_ROUNDS),
+        "--dqa-start-phase",
+        str(DQA_START_PHASE),
         "--batch-size",
         str(BATCH_SIZE),
         "--workers",
@@ -430,6 +434,7 @@ def build_notebook(
             WARMUP_EPOCHS = {warmup_epochs}
             PHASE1_ROUNDS = {phase1_rounds}
             PHASE2_ROUNDS = {phase2_rounds}
+            DQA_START_PHASE = 1
             BATCH_SIZE = {batch_size}
             WORKERS = {workers}
             GPUS = {gpus}
@@ -443,6 +448,7 @@ def build_notebook(
                 "warmup_epochs": WARMUP_EPOCHS,
                 "phase1_rounds": PHASE1_ROUNDS,
                 "phase2_rounds": PHASE2_ROUNDS,
+                "dqa_start_phase": DQA_START_PHASE,
                 "batch_size": BATCH_SIZE,
                 "workers": WORKERS,
                 "gpus": GPUS,
@@ -550,6 +556,8 @@ def build_notebook(
                         str(PHASE1_ROUNDS),
                         "--phase2-rounds",
                         str(PHASE2_ROUNDS),
+                        "--dqa-start-phase",
+                        str(DQA_START_PHASE),
                         "--batch-size",
                         str(BATCH_SIZE),
                         "--workers",
@@ -619,17 +627,19 @@ def build_notebook(
                 free_gib = shutil.disk_usage(WORK_ROOT).free / 1024**3
                 stats_rows = []
                 client_count = len(manifest["clients"]) if "manifest" in globals() else 3
-                for round_idx in range(1, PHASE2_ROUNDS + 1):
-                    round_file = STATS_ROOT / f"phase2_round{round_idx:03d}.json"
-                    client_files = sorted(STATS_ROOT.glob(f"phase2_round{round_idx:03d}_client*.json"))
-                    stats_rows.append(
-                        {
-                            "round": round_idx,
-                            "round_stats": round_file.exists(),
-                            "client_stats": len(client_files),
-                            "expected_client_stats": client_count,
-                        }
-                    )
+                for phase, rounds in ((1, PHASE1_ROUNDS), (2, PHASE2_ROUNDS)):
+                    for round_idx in range(1, rounds + 1):
+                        round_file = STATS_ROOT / f"phase{phase}_round{round_idx:03d}.json"
+                        client_files = sorted(STATS_ROOT.glob(f"phase{phase}_round{round_idx:03d}_client*.json"))
+                        stats_rows.append(
+                            {
+                                "phase": phase,
+                                "round": round_idx,
+                                "round_stats": round_file.exists(),
+                                "client_stats": len(client_files),
+                                "expected_client_stats": client_count,
+                            }
+                        )
 
                 status_summary = {
                     "pid": pid,
@@ -759,6 +769,7 @@ def build_evaluation_notebook(
     notebook_path: Path,
     workspace_name: str,
     stats_dir_name: str,
+    notebook_description: str,
 ) -> None:
     setup_text = """
     from __future__ import annotations
@@ -865,7 +876,7 @@ def build_evaluation_notebook(
             f"""
             # {notebook_title}
 
-            This notebook is a read-only analysis pass for the 13-14 hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, and renders the plots that are easiest to read when we want a quick answer about how DQA behaved.
+            {notebook_description}
             """
         ),
         code(setup_text),
@@ -917,6 +928,7 @@ def build_evaluation_notebook(
                 "client_weathers": [client.get("weather") for client in manifest.get("clients", [])],
                 "run_dirs": len(list(RUNS_ROOT.glob("*"))),
                 "results_csv_files": len(list(RUNS_ROOT.glob("*/results.csv"))),
+                "phase1_stats_files": len(list(STATS_ROOT.glob("phase1_round*.json"))),
                 "phase2_stats_files": len(list(STATS_ROOT.glob("phase2_round*.json"))),
                 "paper_eval_logs": len(list((VALIDATION_ROOT / "paper_protocol_logs").glob("*.log"))),
                 "paper_eval_run_dirs": len(list((VALIDATION_ROOT / "paper_protocol_val_runs").glob("*"))),
@@ -1561,6 +1573,36 @@ def main() -> None:
         notebook_path=ROOT / "02_3_dqa_cwa_14h_evaluation.ipynb",
         workspace_name="efficientteacher_dqa_cwa_14h",
         stats_dir_name="stats_14h",
+        notebook_description="This notebook is a read-only analysis pass for the 13-14 hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, and renders the plots that are easiest to read when we want a quick answer about how DQA behaved.",
+    )
+    build_notebook(
+        notebook_title="03 DQA-CWA Corrected 12h Reproduction",
+        notebook_path=ROOT / "03_dqa_cwa_corrected_12h_reproduction.ipynb",
+        workspace_name="efficientteacher_dqa_cwa_corrected_12h",
+        stats_dir_name="stats_corrected_12h",
+        runner_log_name="dqa_cwa_corrected_12h_runner.out",
+        pid_file_name="dqa_cwa_corrected_12h_runner.pid",
+        warmup_epochs=15,
+        phase1_rounds=20,
+        phase2_rounds=40,
+        batch_size=64,
+        workers=0,
+        gpus=2,
+        master_port=29513,
+        min_free_gib=80,
+        mode_heading="Corrected 12 Hour Configuration",
+        mode_description="This run uses the corrected FedSTO Algorithm 1 order: clients train from the current global model, client checkpoints are aggregated, the server updates that aggregate on labeled data, and that server-updated model becomes the next global checkpoint. DQA-CWA starts at phase 1, so every post-warmup federated round uses DQA aggregation rather than FedSTO aggregation.",
+        estimate_note="The completed FedSTO log measured 50 warm-up epochs at 0.982 hours, phase-1 rounds at about 10.46 minutes each, and phase-2 rounds at about 11.17 minutes each. With 15 warm-up epochs, 20 phase-1 rounds, and 40 phase-2 rounds, the clean-run estimate is about 11.2 hours before modest DQA overhead, so this is aimed at roughly a 12-hour corrected run.",
+        run_mode="blocking",
+        run_default=True,
+        eval_default=True,
+    )
+    build_evaluation_notebook(
+        notebook_title="03_2 DQA-CWA Corrected 12h Evaluation",
+        notebook_path=ROOT / "03_2_dqa_cwa_corrected_12h_evaluation.ipynb",
+        workspace_name="efficientteacher_dqa_cwa_corrected_12h",
+        stats_dir_name="stats_corrected_12h",
+        notebook_description="This notebook is a read-only analysis pass for the corrected 12-hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, renders the plots that are easiest to read, and compares DQA-CWA against the corrected FedSTO baseline when both paper-protocol summaries exist.",
     )
 
 
