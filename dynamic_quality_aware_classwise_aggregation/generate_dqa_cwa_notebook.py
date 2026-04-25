@@ -588,7 +588,19 @@ def build_notebook(
                 def tail_lines(path: Path, lines: int = 25) -> list[str]:
                     if not path.exists():
                         return []
-                    return path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+                    try:
+                        result = subprocess.run(
+                            ["tail", "-n", str(lines), str(path)],
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        return result.stdout.splitlines()
+                    except (FileNotFoundError, subprocess.CalledProcessError):
+                        from collections import deque
+
+                        with path.open(encoding="utf-8", errors="replace") as f:
+                            return [line.rstrip("\\n") for line in deque(f, maxlen=lines)]
 
 
                 history_path = WORK_ROOT / "history.json"
@@ -741,6 +753,742 @@ def build_notebook(
     print(f"Wrote {notebook_path}")
 
 
+def build_evaluation_notebook(
+    *,
+    notebook_title: str,
+    notebook_path: Path,
+    workspace_name: str,
+    stats_dir_name: str,
+) -> None:
+    setup_text = """
+    from __future__ import annotations
+
+    import json
+    import re
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from typing import Optional
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    from IPython.display import Image as NotebookImage, display
+
+    try:
+        import seaborn as sns
+    except ModuleNotFoundError:
+        sns = None
+
+
+    def find_repo_root(start: Optional[Path] = None) -> Path:
+        start = Path.cwd().resolve() if start is None else Path(start).resolve()
+        required = (
+            "dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py",
+            "navigating_data_heterogeneity/setup_fedsto_exact_reproduction.py",
+        )
+        candidate_dirs = []
+        for base in (start, *start.parents):
+            candidate_dirs.extend(
+                [
+                    base,
+                    base / "Object_Detection",
+                    base / "masters_research" / "Object_Detection",
+                ]
+            )
+        for candidate in candidate_dirs:
+            if all((candidate / marker).exists() for marker in required):
+                return candidate.resolve()
+        raise FileNotFoundError("Could not locate the Object_Detection repository root.")
+
+
+    REPO_ROOT = find_repo_root()
+    DQA_ROOT = REPO_ROOT / "dynamic_quality_aware_classwise_aggregation"
+    NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
+    WORK_ROOT = DQA_ROOT / "__WORKSPACE_NAME__"
+    STATS_ROOT = DQA_ROOT / "__STATS_DIR_NAME__"
+    RUNS_ROOT = WORK_ROOT / "runs"
+    VALIDATION_ROOT = WORK_ROOT / "validation_reports"
+    NOTEBOOK_GENERATOR = DQA_ROOT / "__GENERATOR_NAME__"
+
+    FEDSTO_WORK_ROOT = NAV_ROOT / "efficientteacher_fedsto"
+    FEDSTO_TRAINING_SUMMARY = FEDSTO_WORK_ROOT / "validation_reports" / "tables" / "training_run_summary.csv"
+    FEDSTO_PAPER_EVAL_SUMMARY = FEDSTO_WORK_ROOT / "validation_reports" / "paper_protocol_eval_summary.csv"
+
+    if sns is not None:
+        sns.set_theme(style="whitegrid", context="talk")
+    else:
+        plt.style.use("ggplot")
+    pd.options.display.max_columns = 200
+    pd.options.display.max_rows = 200
+
+
+    def plot_line(ax, data: pd.DataFrame, *, x: str, y: str, hue: str | None = None, marker: str | None = None, linewidth: float = 2.0):
+        if sns is not None:
+            return sns.lineplot(data=data, x=x, y=y, hue=hue, marker=marker, linewidth=linewidth, ax=ax)
+
+        if hue is not None and hue in data.columns:
+            for key, frame in data.groupby(hue):
+                ordered = frame.sort_values(x)
+                ax.plot(ordered[x], ordered[y], marker=marker, linewidth=linewidth, label=str(key))
+            ax.legend(title=hue)
+        else:
+            ordered = data.sort_values(x)
+            ax.plot(ordered[x], ordered[y], marker=marker, linewidth=linewidth)
+        return ax
+
+
+    def plot_bar(ax, data: pd.DataFrame, *, x: str, y: str, hue: str | None = None):
+        if sns is not None:
+            return sns.barplot(data=data, x=x, y=y, hue=hue, ax=ax)
+
+        if hue is not None and hue in data.columns:
+            pivot = data.pivot_table(index=x, columns=hue, values=y, aggfunc="mean")
+            pivot.plot(kind="bar", ax=ax)
+        else:
+            grouped = data.groupby(x, as_index=False)[y].mean()
+            ax.bar(grouped[x], grouped[y])
+        return ax
+
+    print("repo_root:", REPO_ROOT)
+    print("workspace:", WORK_ROOT)
+    print("runs_root:", RUNS_ROOT)
+    print("validation_root:", VALIDATION_ROOT)
+    """
+    setup_text = (
+        setup_text.replace("__WORKSPACE_NAME__", workspace_name)
+        .replace("__STATS_DIR_NAME__", stats_dir_name)
+        .replace("__GENERATOR_NAME__", GENERATOR_PATH.name)
+    )
+
+    cells = [
+        md(
+            f"""
+            # {notebook_title}
+
+            This notebook is a read-only analysis pass for the 13-14 hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, and renders the plots that are easiest to read when we want a quick answer about how DQA behaved.
+            """
+        ),
+        code(setup_text),
+        md(
+            """
+            ## 1. Workspace and Artifact Status
+
+            Start with a compact snapshot of what exists: manifest, history, checkpoints, stats, and partial or complete paper-eval outputs.
+            """
+        ),
+        code(
+            """
+            def modified_utc(path: Path) -> str:
+                if not path.exists():
+                    return ""
+                return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+            manifest_path = WORK_ROOT / "manifest.json"
+            history_path = WORK_ROOT / "history.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+            history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else []
+
+            artifact_rows = [
+                {"artifact": "workspace", "path": str(WORK_ROOT), "exists": WORK_ROOT.exists(), "modified_utc": modified_utc(WORK_ROOT)},
+                {"artifact": "stats_root", "path": str(STATS_ROOT), "exists": STATS_ROOT.exists(), "modified_utc": modified_utc(STATS_ROOT)},
+                {"artifact": "manifest", "path": str(manifest_path), "exists": manifest_path.exists(), "modified_utc": modified_utc(manifest_path)},
+                {"artifact": "history", "path": str(history_path), "exists": history_path.exists(), "modified_utc": modified_utc(history_path)},
+                {"artifact": "global_checkpoints", "path": str(WORK_ROOT / "global_checkpoints"), "exists": (WORK_ROOT / "global_checkpoints").exists(), "modified_utc": modified_utc(WORK_ROOT / "global_checkpoints")},
+                {"artifact": "paper_eval_summary_csv", "path": str(VALIDATION_ROOT / "paper_protocol_eval_summary.csv"), "exists": (VALIDATION_ROOT / "paper_protocol_eval_summary.csv").exists(), "modified_utc": modified_utc(VALIDATION_ROOT / "paper_protocol_eval_summary.csv")},
+                {"artifact": "paper_eval_manifest_json", "path": str(VALIDATION_ROOT / "paper_protocol_eval_manifest.json"), "exists": (VALIDATION_ROOT / "paper_protocol_eval_manifest.json").exists(), "modified_utc": modified_utc(VALIDATION_ROOT / "paper_protocol_eval_manifest.json")},
+            ]
+            display(pd.DataFrame(artifact_rows))
+
+            completed_phase1 = sum(1 for entry in history if int(entry.get("phase", 0)) == 1)
+            completed_phase2 = sum(1 for entry in history if int(entry.get("phase", 0)) == 2)
+            progress_rows = [
+                {"phase": "phase1", "completed_rounds": completed_phase1},
+                {"phase": "phase2", "completed_rounds": completed_phase2},
+                {"phase": "total", "completed_rounds": len(history)},
+            ]
+            display(pd.DataFrame(progress_rows))
+
+            manifest_summary = {
+                "classes": manifest.get("classes", []),
+                "server_weather": manifest.get("server", {}).get("weather"),
+                "server_train_images": manifest.get("server", {}).get("train_images"),
+                "server_val_images": manifest.get("server", {}).get("val_images"),
+                "client_weathers": [client.get("weather") for client in manifest.get("clients", [])],
+                "run_dirs": len(list(RUNS_ROOT.glob("*"))),
+                "results_csv_files": len(list(RUNS_ROOT.glob("*/results.csv"))),
+                "phase2_stats_files": len(list(STATS_ROOT.glob("phase2_round*.json"))),
+                "paper_eval_logs": len(list((VALIDATION_ROOT / "paper_protocol_logs").glob("*.log"))),
+                "paper_eval_run_dirs": len(list((VALIDATION_ROOT / "paper_protocol_val_runs").glob("*"))),
+            }
+            manifest_summary
+            """
+        ),
+        md(
+            """
+            ## 2. Build a Compact Training Summary
+
+            Parse every `runs/*/results.csv`, normalize it into one table, and save a reusable `training_run_summary.csv` under `validation_reports/tables/`.
+            """
+        ),
+        code(
+            """
+            def normalize_results_columns(df: pd.DataFrame) -> pd.DataFrame:
+                renamed = df.rename(columns=lambda col: col.strip())
+                return renamed
+
+
+            def parse_run_name(run_name: str) -> dict | None:
+                if run_name == "runtime_server_warmup":
+                    return {
+                        "phase": 0,
+                        "round": 0,
+                        "role": "warmup",
+                        "client_id": np.nan,
+                        "weather": "server_cloudy",
+                    }
+
+                match = re.fullmatch(
+                    r"dqa_phase(?P<phase>[12])_round(?P<round>\\d{3})_(?:(?P<server>server)|client(?P<client_id>\\d+)_(?P<weather>[a-z]+))",
+                    run_name,
+                )
+                if not match:
+                    return None
+
+                phase = int(match.group("phase"))
+                round_idx = int(match.group("round"))
+                if match.group("server"):
+                    return {
+                        "phase": phase,
+                        "round": round_idx,
+                        "role": "server",
+                        "client_id": np.nan,
+                        "weather": "server_cloudy",
+                    }
+                return {
+                    "phase": phase,
+                    "round": round_idx,
+                    "role": "client",
+                    "client_id": int(match.group("client_id")),
+                    "weather": match.group("weather"),
+                }
+
+
+            def safe_float(value) -> float:
+                if pd.isna(value):
+                    return np.nan
+                return float(value)
+
+
+            metric_columns = {
+                "precision": "metrics/precision",
+                "recall": "metrics/recall",
+                "mAP_0.5": "metrics/mAP_0.5",
+                "mAP_0.5:0.95": "metrics/mAP_0.5:0.95",
+            }
+            train_loss_columns = {
+                "box_loss": "train/box_loss",
+                "obj_loss": "train/obj_loss",
+                "cls_loss": "train/cls_loss",
+            }
+            val_loss_columns = {
+                "box_loss": "val/box_loss",
+                "obj_loss": "val/obj_loss",
+                "cls_loss": "val/cls_loss",
+            }
+
+
+            summary_rows = []
+            best_basis = "metrics/mAP_0.5:0.95"
+            for results_path in sorted(RUNS_ROOT.glob("*/results.csv")):
+                run_name = results_path.parent.name
+                meta = parse_run_name(run_name)
+                if meta is None:
+                    continue
+
+                df = normalize_results_columns(pd.read_csv(results_path))
+                best_idx = df[best_basis].astype(float).idxmax()
+                final_row = df.iloc[-1]
+                best_row = df.loc[best_idx]
+
+                row = {
+                    "run_name": run_name,
+                    "run_dir": str(results_path.parent),
+                    "phase": meta["phase"],
+                    "round": meta["round"],
+                    "role": meta["role"],
+                    "client_id": meta["client_id"],
+                    "weather": meta["weather"],
+                    "n_logged_rows": len(df),
+                    "final_epoch": int(final_row["epoch"]),
+                    "best_epoch": int(best_row["epoch"]),
+                    "best_basis": best_basis,
+                }
+
+                for prefix, source_row in (("final", final_row), ("best", best_row)):
+                    for metric_name, column_name in metric_columns.items():
+                        row[f"{prefix}_metrics/{metric_name}"] = safe_float(source_row[column_name])
+                    for loss_name, column_name in train_loss_columns.items():
+                        row[f"{prefix}_train/{loss_name}"] = safe_float(source_row[column_name])
+                    for loss_name, column_name in val_loss_columns.items():
+                        row[f"{prefix}_val/{loss_name}"] = safe_float(source_row[column_name])
+
+                summary_rows.append(row)
+
+            run_summary = pd.DataFrame(summary_rows)
+            if run_summary.empty:
+                raise RuntimeError(f"No DQA results.csv files were found under {RUNS_ROOT}")
+
+            run_summary["client_id_sort"] = run_summary["client_id"].fillna(-1)
+            run_summary = (
+                run_summary
+                .sort_values(["phase", "round", "role", "client_id_sort"])
+                .drop(columns=["client_id_sort"])
+                .reset_index(drop=True)
+            )
+
+            validation_table_root = VALIDATION_ROOT / "tables"
+            validation_table_root.mkdir(parents=True, exist_ok=True)
+            training_summary_path = validation_table_root / "training_run_summary.csv"
+            run_summary.to_csv(training_summary_path, index=False)
+
+            server_summary = run_summary[run_summary["role"].isin(["warmup", "server"])].copy()
+            client_summary = run_summary[run_summary["role"] == "client"].copy()
+
+            print("Wrote training summary:", training_summary_path)
+            display(run_summary.groupby(["phase", "role"], dropna=False).size().reset_index(name="runs"))
+            display(run_summary.head(12))
+            """
+        ),
+        md(
+            """
+            ## 3. Key DQA Checkpoints
+
+            Pull out the warm-up baseline, the best phase-1 server round, the best phase-2 server round, and the final phase-2 server round. Then show the latest client snapshot by weather.
+            """
+        ),
+        code(
+            """
+            def labeled_checkpoint_rows(summary: pd.DataFrame) -> pd.DataFrame:
+                selections = []
+                candidates = [
+                    ("warmup", summary[summary["phase"] == 0], "best"),
+                    ("best_phase1_server", summary[(summary["phase"] == 1) & (summary["role"] == "server")], "best"),
+                    ("best_phase2_server", summary[(summary["phase"] == 2) & (summary["role"] == "server")], "best"),
+                    ("final_phase2_server", summary[(summary["phase"] == 2) & (summary["role"] == "server")], "final"),
+                ]
+
+                for label, frame, source in candidates:
+                    if frame.empty:
+                        continue
+                    if source == "final":
+                        chosen = frame.sort_values(["round", "best_epoch"]).iloc[-1].copy()
+                    else:
+                        chosen = frame.sort_values("best_metrics/mAP_0.5:0.95", ascending=False).iloc[0].copy()
+                    chosen["checkpoint"] = label
+                    chosen["metric_source"] = source
+                    selections.append(chosen)
+
+                if not selections:
+                    return pd.DataFrame()
+                return pd.DataFrame(selections)
+
+
+            key_server = labeled_checkpoint_rows(server_summary)
+            if not key_server.empty:
+                warmup_baseline = key_server.loc[key_server["checkpoint"] == "warmup", "best_metrics/mAP_0.5:0.95"]
+                baseline = warmup_baseline.iloc[0] if not warmup_baseline.empty else np.nan
+                key_server["delta_vs_warmup_mAP_0.5:0.95"] = key_server["best_metrics/mAP_0.5:0.95"] - baseline
+                display(
+                    key_server[
+                        [
+                            "checkpoint",
+                            "run_name",
+                            "phase",
+                            "round",
+                            "metric_source",
+                            "final_metrics/precision",
+                            "final_metrics/recall",
+                            "final_metrics/mAP_0.5",
+                            "final_metrics/mAP_0.5:0.95",
+                            "best_metrics/mAP_0.5",
+                            "best_metrics/mAP_0.5:0.95",
+                            "delta_vs_warmup_mAP_0.5:0.95",
+                        ]
+                    ].round(4)
+                )
+
+            latest_clients = (
+                client_summary
+                .sort_values(["phase", "round"])
+                .groupby(["phase", "weather"], as_index=False)
+                .tail(1)
+                .sort_values(["phase", "weather"])
+            )
+            display(
+                latest_clients[
+                    [
+                        "phase",
+                        "weather",
+                        "round",
+                        "final_metrics/precision",
+                        "final_metrics/recall",
+                        "final_metrics/mAP_0.5",
+                        "final_metrics/mAP_0.5:0.95",
+                    ]
+                ].round(4)
+            )
+            """
+        ),
+        md(
+            """
+            ## 4. Server Metric Curves
+
+            Plot the warm-up epochs and the federated server rounds on one stitched timeline so the main mAP, precision, and recall trends are easy to scan.
+            """
+        ),
+        code(
+            """
+            warmup_history_path = RUNS_ROOT / "runtime_server_warmup" / "results.csv"
+            warmup_history = normalize_results_columns(pd.read_csv(warmup_history_path))
+            warmup_epochs = len(warmup_history)
+            phase1_max_round = int(server_summary.loc[server_summary["phase"] == 1, "round"].max()) if (server_summary["phase"] == 1).any() else 0
+
+            warmup_curve = warmup_history[
+                [
+                    "epoch",
+                    "metrics/precision",
+                    "metrics/recall",
+                    "metrics/mAP_0.5",
+                    "metrics/mAP_0.5:0.95",
+                ]
+            ].copy()
+            warmup_curve["timeline"] = warmup_curve["epoch"] + 1
+            warmup_curve["stage"] = "warmup"
+
+            def server_curve_frame(phase: int, stage: str, offset: int) -> pd.DataFrame:
+                phase_df = server_summary[(server_summary["phase"] == phase) & (server_summary["role"] == "server")].copy()
+                if phase_df.empty:
+                    return pd.DataFrame(columns=["timeline", "stage", "round", "metrics/precision", "metrics/recall", "metrics/mAP_0.5", "metrics/mAP_0.5:0.95"])
+                phase_df["timeline"] = offset + phase_df["round"]
+                phase_df["stage"] = stage
+                phase_df = phase_df.rename(
+                    columns={
+                        "final_metrics/precision": "metrics/precision",
+                        "final_metrics/recall": "metrics/recall",
+                        "final_metrics/mAP_0.5": "metrics/mAP_0.5",
+                        "final_metrics/mAP_0.5:0.95": "metrics/mAP_0.5:0.95",
+                    }
+                )
+                return phase_df[
+                    [
+                        "timeline",
+                        "stage",
+                        "round",
+                        "metrics/precision",
+                        "metrics/recall",
+                        "metrics/mAP_0.5",
+                        "metrics/mAP_0.5:0.95",
+                    ]
+                ]
+
+
+            curve_df = pd.concat(
+                [
+                    warmup_curve[["timeline", "stage", "metrics/precision", "metrics/recall", "metrics/mAP_0.5", "metrics/mAP_0.5:0.95"]],
+                    server_curve_frame(1, "phase1", warmup_epochs),
+                    server_curve_frame(2, "phase2", warmup_epochs + phase1_max_round),
+                ],
+                ignore_index=True,
+            )
+
+            fig, axes = plt.subplots(2, 2, figsize=(18, 10), sharex=True)
+            metric_specs = [
+                ("metrics/mAP_0.5", "mAP@0.5"),
+                ("metrics/mAP_0.5:0.95", "mAP@0.5:0.95"),
+                ("metrics/precision", "precision"),
+                ("metrics/recall", "recall"),
+            ]
+
+            for ax, (metric_col, title) in zip(axes.flat, metric_specs):
+                plot_line(ax, curve_df, x="timeline", y=metric_col, hue="stage", linewidth=2)
+                if warmup_epochs:
+                    ax.axvline(warmup_epochs + 0.5, color="gray", linestyle="--", linewidth=1)
+                if phase1_max_round:
+                    ax.axvline(warmup_epochs + phase1_max_round + 0.5, color="gray", linestyle="--", linewidth=1)
+                best_idx = curve_df[metric_col].idxmax()
+                best_row = curve_df.loc[best_idx]
+                ax.scatter([best_row["timeline"]], [best_row[metric_col]], color="black", s=50, zorder=5)
+                ax.annotate(
+                    f"{best_row['stage']} peak\\n{best_row[metric_col]:.3f}",
+                    (best_row["timeline"], best_row[metric_col]),
+                    textcoords="offset points",
+                    xytext=(8, 8),
+                    fontsize=10,
+                )
+                ax.set_title(title)
+                ax.set_xlabel("stitched timeline step")
+                ax.set_ylabel(title)
+
+            plt.tight_layout()
+            plt.show()
+            """
+        ),
+        md(
+            """
+            ## 5. Client Weather Trajectories
+
+            The server view is only half the story. These plots keep the client runs split by weather so it is easier to see whether one weather regime is drifting or improving differently from the others.
+            """
+        ),
+        code(
+            """
+            fig, axes = plt.subplots(1, 2, figsize=(18, 5), sharey=True)
+            for ax, phase in zip(axes, [1, 2]):
+                phase_df = client_summary[client_summary["phase"] == phase].copy()
+                if phase_df.empty:
+                    ax.set_visible(False)
+                    continue
+                plot_line(
+                    ax,
+                    phase_df,
+                    x="round",
+                    y="final_metrics/mAP_0.5:0.95",
+                    hue="weather",
+                    marker="o",
+                )
+                ax.set_title(f"phase {phase} client mAP@0.5:0.95")
+                ax.set_xlabel("round")
+                ax.set_ylabel("mAP@0.5:0.95")
+
+            plt.tight_layout()
+            plt.show()
+
+            latest_phase2_clients = (
+                client_summary[client_summary["phase"] == 2]
+                .sort_values(["weather", "round"])
+                .groupby("weather", as_index=False)
+                .tail(1)
+                .sort_values("weather")
+            )
+            if not latest_phase2_clients.empty:
+                plt.figure(figsize=(9, 4))
+                plot_bar(
+                    plt.gca(),
+                    latest_phase2_clients,
+                    x="weather",
+                    y="final_metrics/mAP_0.5:0.95",
+                )
+                plt.title("latest phase-2 client mAP@0.5:0.95 by weather")
+                plt.xlabel("weather")
+                plt.ylabel("mAP@0.5:0.95")
+                plt.tight_layout()
+                plt.show()
+            """
+        ),
+        md(
+            """
+            ## 6. DQA vs FedSTO Snapshot
+
+            If the FedSTO baseline summary is present, compare the same headline checkpoints side by side so the server story is easy to read without opening two notebooks.
+            """
+        ),
+        code(
+            """
+            def comparable_checkpoint_rows(summary: pd.DataFrame, method: str) -> pd.DataFrame:
+                rows = []
+
+                def append_frame(label: str, frame: pd.DataFrame, source: str) -> None:
+                    if frame.empty:
+                        return
+                    chosen = frame.iloc[0]
+                    prefix = "best" if source == "best" else "final"
+                    rows.append(
+                        {
+                            "method": method,
+                            "checkpoint": label,
+                            "run_name": chosen["run_name"],
+                            "phase": chosen["phase"],
+                            "round": chosen["round"],
+                            "metric_source": source,
+                            "precision": chosen[f"{prefix}_metrics/precision"],
+                            "recall": chosen[f"{prefix}_metrics/recall"],
+                            "map50": chosen[f"{prefix}_metrics/mAP_0.5"],
+                            "map50_95": chosen[f"{prefix}_metrics/mAP_0.5:0.95"],
+                        }
+                    )
+
+                append_frame("warmup", summary[summary["phase"] == 0].sort_values("best_metrics/mAP_0.5:0.95", ascending=False).head(1), "best")
+                append_frame("best_phase1_server", summary[(summary["phase"] == 1) & (summary["role"] == "server")].sort_values("best_metrics/mAP_0.5:0.95", ascending=False).head(1), "best")
+                append_frame("best_phase2_server", summary[(summary["phase"] == 2) & (summary["role"] == "server")].sort_values("best_metrics/mAP_0.5:0.95", ascending=False).head(1), "best")
+                append_frame("final_phase2_server", summary[(summary["phase"] == 2) & (summary["role"] == "server")].sort_values("round").tail(1), "final")
+
+                return pd.DataFrame(rows)
+
+
+            comparison_frames = [comparable_checkpoint_rows(run_summary, "DQA-CWA")]
+            if FEDSTO_TRAINING_SUMMARY.exists():
+                fedsto_summary = pd.read_csv(FEDSTO_TRAINING_SUMMARY)
+                comparison_frames.append(comparable_checkpoint_rows(fedsto_summary, "FedSTO"))
+            else:
+                fedsto_summary = pd.DataFrame()
+                print("FedSTO training summary not found:", FEDSTO_TRAINING_SUMMARY)
+
+            checkpoint_comparison = pd.concat(comparison_frames, ignore_index=True)
+            display(checkpoint_comparison.round(4))
+
+            if checkpoint_comparison["method"].nunique() > 1:
+                fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+                plot_bar(axes[0], checkpoint_comparison, x="checkpoint", y="map50", hue="method")
+                plot_bar(axes[1], checkpoint_comparison, x="checkpoint", y="map50_95", hue="method")
+                axes[0].set_title("server checkpoint comparison: mAP@0.5")
+                axes[1].set_title("server checkpoint comparison: mAP@0.5:0.95")
+                for ax in axes:
+                    ax.tick_params(axis="x", rotation=20)
+                    ax.set_xlabel("")
+                plt.tight_layout()
+                plt.show()
+            """
+        ),
+        md(
+            """
+            ## 7. Paper-Eval Status and Visual Artifacts
+
+            Use the complete paper-eval summary if it exists. If not, fall back to partial DQA evaluation artifacts so we can still see what has already been produced.
+            """
+        ),
+        code(
+            """
+            paper_eval_frames = []
+            dqa_paper_eval_summary = VALIDATION_ROOT / "paper_protocol_eval_summary.csv"
+            if dqa_paper_eval_summary.exists():
+                dqa_eval_df = pd.read_csv(dqa_paper_eval_summary)
+                dqa_eval_df.insert(0, "method", "DQA-CWA")
+                paper_eval_frames.append(dqa_eval_df)
+
+            if FEDSTO_PAPER_EVAL_SUMMARY.exists():
+                fedsto_eval_df = pd.read_csv(FEDSTO_PAPER_EVAL_SUMMARY)
+                fedsto_eval_df.insert(0, "method", "FedSTO")
+                paper_eval_frames.append(fedsto_eval_df)
+
+            if paper_eval_frames:
+                paper_eval_comparison = pd.concat(paper_eval_frames, ignore_index=True)
+                display(paper_eval_comparison.round(4))
+
+                ok_rows = paper_eval_comparison[paper_eval_comparison["status"] == "ok"].copy()
+                if not ok_rows.empty:
+                    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+                    plot_bar(axes[0], ok_rows, x="split", y="map50", hue="method")
+                    plot_bar(axes[1], ok_rows, x="split", y="map50_95", hue="method")
+                    axes[0].set_title("paper eval mAP@0.5")
+                    axes[1].set_title("paper eval mAP@0.5:0.95")
+                    for ax in axes:
+                        ax.tick_params(axis="x", rotation=20)
+                        ax.set_xlabel("")
+                    plt.tight_layout()
+                    plt.show()
+            else:
+                print("No complete paper-protocol summary CSV is available yet.")
+
+            partial_log_dir = VALIDATION_ROOT / "paper_protocol_logs"
+            partial_run_dir = VALIDATION_ROOT / "paper_protocol_val_runs"
+
+            partial_log_rows = [
+                {
+                    "log_file": path.name,
+                    "bytes": path.stat().st_size,
+                    "modified_utc": modified_utc(path),
+                }
+                for path in sorted(partial_log_dir.glob("*.log"))
+            ]
+            if partial_log_rows:
+                display(pd.DataFrame(partial_log_rows))
+
+            partial_run_rows = [
+                {
+                    "run_dir": path.name,
+                    "has_pr_curve": (path / "PR_curve.png").exists(),
+                    "has_confusion_matrix": (path / "confusion_matrix.png").exists(),
+                    "has_p_curve": (path / "P_curve.png").exists(),
+                    "has_r_curve": (path / "R_curve.png").exists(),
+                    "modified_utc": modified_utc(path),
+                }
+                for path in sorted(partial_run_dir.glob("*"))
+                if path.is_dir()
+            ]
+            if partial_run_rows:
+                display(pd.DataFrame(partial_run_rows))
+
+            preview_dir = next(
+                (
+                    path
+                    for path in sorted(partial_run_dir.glob("*"))
+                    if path.is_dir() and (path / "PR_curve.png").exists() and (path / "confusion_matrix.png").exists()
+                ),
+                None,
+            )
+            if preview_dir is not None:
+                print("Previewing DQA partial paper-eval artifacts from:", preview_dir.name)
+                display(NotebookImage(filename=str(preview_dir / "PR_curve.png"), width=700))
+                display(NotebookImage(filename=str(preview_dir / "confusion_matrix.png"), width=700))
+            """
+        ),
+        md(
+            """
+            ## 8. Artifact Index
+
+            A last table with the main files we usually click next.
+            """
+        ),
+        code(
+            """
+            def artifact_row(path: Path, label: str) -> dict:
+                exists = path.exists()
+                return {
+                    "label": label,
+                    "path": str(path),
+                    "exists": exists,
+                    "modified_utc": modified_utc(path),
+                }
+
+
+            artifact_rows = [
+                artifact_row(DQA_ROOT / "README.md", "readme"),
+                artifact_row(NOTEBOOK_GENERATOR, "notebook_generator"),
+                artifact_row(WORK_ROOT / "manifest.json", "manifest"),
+                artifact_row(WORK_ROOT / "history.json", "history"),
+                artifact_row(VALIDATION_ROOT / "tables" / "training_run_summary.csv", "training_run_summary_csv"),
+                artifact_row(VALIDATION_ROOT / "paper_protocol_eval_summary.csv", "paper_eval_summary_csv"),
+                artifact_row(VALIDATION_ROOT / "paper_protocol_eval_manifest.json", "paper_eval_manifest_json"),
+                artifact_row(VALIDATION_ROOT / "paper_protocol_val_runs", "paper_eval_run_dir"),
+                artifact_row(WORK_ROOT / "global_checkpoints", "global_checkpoints_dir"),
+                artifact_row(STATS_ROOT, "stats_dir"),
+            ]
+            display(pd.DataFrame(artifact_rows))
+            """
+        ),
+    ]
+
+    notebook = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {
+                "name": "python",
+                "version": "3.10",
+            },
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    notebook_path.write_text(json.dumps(notebook, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Wrote {notebook_path}")
+
+
 def main() -> None:
     build_notebook(
         notebook_title="01 DQA-CWA Reproduction",
@@ -807,6 +1555,12 @@ def main() -> None:
         run_mode="blocking",
         run_default=True,
         eval_default=True,
+    )
+    build_evaluation_notebook(
+        notebook_title="02_3 DQA-CWA 14h Evaluation",
+        notebook_path=ROOT / "02_3_dqa_cwa_14h_evaluation.ipynb",
+        workspace_name="efficientteacher_dqa_cwa_14h",
+        stats_dir_name="stats_14h",
     )
 
 
