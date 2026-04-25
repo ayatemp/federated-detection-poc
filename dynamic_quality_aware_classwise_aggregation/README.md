@@ -65,7 +65,7 @@ The runner is restartable and disk-conscious by default:
 - Existing valid `last.pt` / global checkpoints are reused after interruption.
 - Completed-round intermediate `last.pt`, `best.pt`, and start checkpoints are deleted after each global checkpoint is written.
 - Full EfficientTeacher training output is appended to `efficientteacher_dqa_cwa/dqa_cwa_latest.log` so notebooks stay responsive.
-- `--min-free-gib` defaults to `80`; if free space drops below that, the runner cleans completed intermediates and then stops with a clear error instead of failing inside `torch.save`.
+- `--min-free-gib` defaults to `70`; if free space drops below that, the runner cleans completed intermediates and then stops with a clear error instead of failing inside `torch.save`.
 
 Use `--keep-intermediate-checkpoints` only when you intentionally need every per-run checkpoint for debugging. Use `--stream-train-output` only when running outside a notebook and you want the raw training logs in the terminal.
 
@@ -145,7 +145,7 @@ python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py \
   --batch-size 64 \
   --workers 0 \
   --gpus 2 \
-  --min-free-gib 80
+  --min-free-gib 70
 ```
 
 For a more stable 24-hour pilot, override these with `--warmup-epochs 20 --phase1-rounds 40 --phase2-rounds 60`. For paper-scale reproduction, override these with `--warmup-epochs 50 --phase1-rounds 100 --phase2-rounds 150`.

@@ -1620,7 +1620,7 @@ def main() -> None:
         workers=0,
         gpus=2,
         master_port=29513,
-        min_free_gib=80,
+        min_free_gib=70,
         mode_heading="Corrected 12 Hour Configuration",
         mode_description="This run uses the corrected FedSTO Algorithm 1 order: clients train from the current global model, client checkpoints are aggregated, the server updates that aggregate on labeled data, and that server-updated model becomes the next global checkpoint. DQA-CWA starts at phase 1, so every post-warmup federated round uses DQA aggregation rather than FedSTO aggregation.",
         estimate_note="The completed FedSTO log measured 50 warm-up epochs at 0.982 hours, phase-1 rounds at about 10.46 minutes each, and phase-2 rounds at about 11.17 minutes each. With 15 warm-up epochs, 20 phase-1 rounds, and 40 phase-2 rounds, the clean-run estimate is about 11.2 hours before modest DQA overhead, so this is aimed at roughly a 12-hour corrected run.",

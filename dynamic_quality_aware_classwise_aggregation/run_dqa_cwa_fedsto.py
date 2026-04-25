@@ -601,7 +601,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-free-gib",
         type=float,
-        default=80.0,
+        default=70.0,
         help="Abort before starting another train/aggregate step if free disk space under the workspace is below this value.",
     )
     parser.add_argument("--log-file", type=Path, default=None, help="Append EfficientTeacher train output here instead of flooding notebook stdout.")
