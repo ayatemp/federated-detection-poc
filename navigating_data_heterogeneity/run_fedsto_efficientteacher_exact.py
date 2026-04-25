@@ -258,6 +258,28 @@ def check_runtime_dependencies() -> None:
         )
 
 
+def resolve_gpus(requested_gpus: int) -> int:
+    """Avoid launching more DDP ranks than visible CUDA devices."""
+    if requested_gpus <= 1:
+        return max(1, requested_gpus)
+
+    visible_gpus = torch.cuda.device_count()
+    if visible_gpus >= requested_gpus:
+        return requested_gpus
+    if visible_gpus > 0:
+        print(
+            f"Requested {requested_gpus} GPUs, but only {visible_gpus} CUDA device(s) are visible; "
+            f"using --gpus {visible_gpus}."
+        )
+        return visible_gpus
+
+    print(
+        f"Requested {requested_gpus} GPUs, but no CUDA devices are visible; "
+        "falling back to single-process execution. Training will be CPU-only unless CUDA becomes available."
+    )
+    return 1
+
+
 def write_runtime_config(
     name: str,
     *,
@@ -390,6 +412,7 @@ def run_protocol(args: argparse.Namespace) -> None:
     pretrained = PRETRAINED_PATH if args.dry_run else download_pretrained()
     if not args.dry_run:
         check_runtime_dependencies()
+    args.gpus = resolve_gpus(args.gpus)
     GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
     CLIENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     config_device = "" if args.gpus > 1 else args.device

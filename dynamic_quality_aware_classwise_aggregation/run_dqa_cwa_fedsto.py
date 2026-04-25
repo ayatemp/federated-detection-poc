@@ -299,6 +299,7 @@ def run_protocol(args: argparse.Namespace) -> None:
         args.log_file = args.workspace_root / "dqa_cwa_latest.log"
     if not args.dry_run and not args.append_train_log and args.log_file.exists():
         args.log_file.unlink()
+    args.gpus = fedsto.resolve_gpus(args.gpus)
     config_device = "" if args.gpus > 1 else args.device
     ensure_disk_space(args.workspace_root, args.min_free_gib)
 

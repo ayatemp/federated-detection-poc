@@ -43,6 +43,7 @@ def background_run_markdown() -> dict:
 def background_run_code(run_default: bool) -> dict:
     text = """
     RUN_DQA = __RUN_DEFAULT__
+    ALLOW_CPU_TRAINING = False
     FORCE_RESTART = False
     FORCE_WARMUP = False
     FORCE_RETRAIN = False
@@ -118,6 +119,11 @@ def background_run_code(run_default: bool) -> dict:
 
     if existing_state not in {"missing", "zombie"}:
         print(f"DQA runner already active with PID {existing_pid} (state={existing_state}).")
+    elif RUN_DQA and AVAILABLE_CUDA_GPUS < 1 and not ALLOW_CPU_TRAINING:
+        print(
+            "No CUDA GPU is visible, so the DQA run was not started. "
+            "Use a GPU runtime, or set ALLOW_CPU_TRAINING = True if this is only a tiny debug run."
+        )
     elif RUN_DQA:
         if PID_PATH.exists():
             PID_PATH.unlink()
@@ -156,6 +162,7 @@ def blocking_run_code(run_default: bool) -> dict:
     from collections import deque
 
     RUN_FULL_REPRODUCTION = __RUN_DEFAULT__
+    ALLOW_CPU_TRAINING = False
     FORCE_RESTART = False
     FORCE_WARMUP = False
     FORCE_RETRAIN = False
@@ -241,7 +248,12 @@ def blocking_run_code(run_default: bool) -> dict:
         return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-    if RUN_FULL_REPRODUCTION:
+    if RUN_FULL_REPRODUCTION and AVAILABLE_CUDA_GPUS < 1 and not ALLOW_CPU_TRAINING:
+        print(
+            "No CUDA GPU is visible, so the full DQA run was not started. "
+            "Use a GPU runtime, or set ALLOW_CPU_TRAINING = True if this is only a tiny debug run."
+        )
+    elif RUN_FULL_REPRODUCTION:
         existing_pid = read_pid(PID_PATH)
         existing_state = pid_state(existing_pid)
         if existing_state not in {"missing", "zombie"}:
@@ -315,8 +327,11 @@ def eval_code(eval_default: bool) -> dict:
     ]
     eval_cmd.extend(EVAL_EXTRA_ARGS)
 
-    if RUN_EVAL:
+    has_eval_checkpoint = any((WORK_ROOT / "global_checkpoints").glob("*.pt"))
+    if RUN_EVAL and has_eval_checkpoint:
         subprocess.run(eval_cmd, cwd=REPO_ROOT, check=True)
+    elif RUN_EVAL:
+        print("Skipping evaluation because no global checkpoints exist yet:", WORK_ROOT / "global_checkpoints")
 
     summary_path = WORK_ROOT / "validation_reports" / "paper_protocol_eval_summary.csv"
     if summary_path.exists():
@@ -437,7 +452,21 @@ def build_notebook(
             DQA_START_PHASE = 1
             BATCH_SIZE = {batch_size}
             WORKERS = {workers}
-            GPUS = {gpus}
+            REQUESTED_GPUS = {gpus}
+            try:
+                import torch
+
+                AVAILABLE_CUDA_GPUS = torch.cuda.device_count()
+            except Exception as exc:
+                AVAILABLE_CUDA_GPUS = 0
+                print("Could not inspect CUDA devices:", exc)
+
+            GPUS = min(REQUESTED_GPUS, AVAILABLE_CUDA_GPUS) if AVAILABLE_CUDA_GPUS else 1
+            if GPUS != REQUESTED_GPUS:
+                print(
+                    f"Requested {{REQUESTED_GPUS}} GPUs, but {{AVAILABLE_CUDA_GPUS}} CUDA device(s) are visible. "
+                    f"Using GPUS={{GPUS}} to avoid DDP launch failure."
+                )
             MASTER_PORT = {master_port}
             MIN_FREE_GIB = {min_free_gib}
 
@@ -449,6 +478,8 @@ def build_notebook(
                 "phase1_rounds": PHASE1_ROUNDS,
                 "phase2_rounds": PHASE2_ROUNDS,
                 "dqa_start_phase": DQA_START_PHASE,
+                "requested_gpus": REQUESTED_GPUS,
+                "available_cuda_gpus": AVAILABLE_CUDA_GPUS,
                 "batch_size": BATCH_SIZE,
                 "workers": WORKERS,
                 "gpus": GPUS,
