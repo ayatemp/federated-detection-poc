@@ -238,6 +238,7 @@ def blocking_run_code(run_default: bool) -> dict:
         r"(Resuming DQA-CWA after|No completed DQA-CWA federated rounds|Current global checkpoint|"
         r"Reusing completed (warm-up|DQA-CWA client run|DQA-CWA server run|DQA-CWA global checkpoint)|"
         r"Recovered DQA-CWA phase|Completed DQA-CWA phase|All requested DQA-CWA federated rounds|"
+        r"Skipping DQA-CWA for phase|Falling back to BN-local FedAvg|"
         r"Dry run complete|Training failed|Traceback|RuntimeError|Exception|Error|out of memory|CUDA error)",
         re.IGNORECASE,
     )
@@ -314,8 +315,18 @@ def blocking_run_code(run_default: bool) -> dict:
 def eval_code(eval_default: bool) -> dict:
     text = """
     RUN_EVAL = __RUN_EVAL__
-    EVAL_SPLITS = "cloudy,overcast,rainy,snowy,total"
-    EVAL_EXTRA_ARGS: list[str] = []
+    EVAL_SPLITS = "cloudy"
+    EVAL_BATCH_SIZE = 32
+    EVAL_EXTRA_ARGS: list[str] = ["--no-plots"]
+
+    history_path = WORK_ROOT / "history.json"
+    history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else []
+    eval_checkpoints = []
+    if history:
+        latest = Path(history[-1]["global"])
+        eval_checkpoints.append(f"latest_global={latest}")
+    elif (WORK_ROOT / "global_checkpoints" / "round000_warmup.pt").exists():
+        eval_checkpoints.append(f"warmup_global={WORK_ROOT / 'global_checkpoints' / 'round000_warmup.pt'}")
 
     eval_cmd = [
         str(PYTHON_BIN),
@@ -324,11 +335,14 @@ def eval_code(eval_default: bool) -> dict:
         str(WORK_ROOT),
         "--splits",
         EVAL_SPLITS,
+        "--batch-size",
+        str(EVAL_BATCH_SIZE),
     ]
+    for spec in eval_checkpoints:
+        eval_cmd.extend(["--checkpoint", spec])
     eval_cmd.extend(EVAL_EXTRA_ARGS)
 
-    has_eval_checkpoint = any((WORK_ROOT / "global_checkpoints").glob("*.pt"))
-    if RUN_EVAL and has_eval_checkpoint:
+    if RUN_EVAL and eval_checkpoints:
         subprocess.run(eval_cmd, cwd=REPO_ROOT, check=True)
     elif RUN_EVAL:
         print("Skipping evaluation because no global checkpoints exist yet:", WORK_ROOT / "global_checkpoints")
@@ -339,7 +353,8 @@ def eval_code(eval_default: bool) -> dict:
         display(eval_summary)
     else:
         print("No DQA paper-protocol summary yet:", summary_path)
-        print("Set RUN_EVAL = True after the run has produced checkpoints.")
+        print("Default evaluation is a quick cloudy/latest smoke test with plots disabled.")
+        print("For the full table, set EVAL_SPLITS = 'cloudy,overcast,rainy,snowy,total' and add more checkpoints.")
     """
     return code(text.replace("__RUN_EVAL__", str(eval_default)))
 
@@ -449,7 +464,7 @@ def build_notebook(
             WARMUP_EPOCHS = {warmup_epochs}
             PHASE1_ROUNDS = {phase1_rounds}
             PHASE2_ROUNDS = {phase2_rounds}
-            DQA_START_PHASE = 1
+            DQA_START_PHASE = 2
             BATCH_SIZE = {batch_size}
             WORKERS = {workers}
             REQUESTED_GPUS = {gpus}
@@ -471,7 +486,18 @@ def build_notebook(
             MIN_FREE_GIB = {min_free_gib}
 
             APPEND_TRAIN_LOG = True
-            EXTRA_RUN_ARGS: list[str] = []
+            EXTRA_RUN_ARGS: list[str] = [
+                "--classwise-blend",
+                "0.35",
+                "--server-anchor",
+                "1.25",
+                "--localize-bn",
+                "--enable-dqa-guard",
+                "--dqa-drop-ratio-threshold",
+                "0.15",
+                "--dqa-spike-ratio-threshold",
+                "3.0",
+            ]
 
             {{
                 "warmup_epochs": WARMUP_EPOCHS,
@@ -599,6 +625,7 @@ def build_notebook(
                         str(MASTER_PORT),
                         "--min-free-gib",
                         str(MIN_FREE_GIB),
+                        *EXTRA_RUN_ARGS,
                     ],
                     cwd=REPO_ROOT,
                     check=True,
@@ -700,7 +727,7 @@ def build_notebook(
                 """
                 ## 6. Paper-Style Evaluation
 
-                Once DQA has produced checkpoints, this cell runs the shared per-weather evaluation and then loads the compact summary table.
+                This cell is intentionally quick by default: latest checkpoint, cloudy split, batch size 32, and plots disabled. Use the full split list only when you are ready for the slower paper table.
                 """
             ),
             eval_code(eval_default),
@@ -1607,33 +1634,33 @@ def main() -> None:
         notebook_description="This notebook is a read-only analysis pass for the 13-14 hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, and renders the plots that are easiest to read when we want a quick answer about how DQA behaved.",
     )
     build_notebook(
-        notebook_title="03 DQA-CWA Corrected 12h Reproduction",
+        notebook_title="03 DQA-CWA Guarded 8h Reproduction",
         notebook_path=ROOT / "03_dqa_cwa_corrected_12h_reproduction.ipynb",
         workspace_name="efficientteacher_dqa_cwa_corrected_12h",
         stats_dir_name="stats_corrected_12h",
         runner_log_name="dqa_cwa_corrected_12h_runner.out",
         pid_file_name="dqa_cwa_corrected_12h_runner.pid",
         warmup_epochs=15,
-        phase1_rounds=20,
-        phase2_rounds=40,
+        phase1_rounds=14,
+        phase2_rounds=27,
         batch_size=64,
         workers=0,
         gpus=2,
         master_port=29513,
         min_free_gib=70,
-        mode_heading="Corrected 12 Hour Configuration",
-        mode_description="This run uses the corrected FedSTO Algorithm 1 order: clients train from the current global model, client checkpoints are aggregated, the server updates that aggregate on labeled data, and that server-updated model becomes the next global checkpoint. DQA-CWA starts at phase 1, so every post-warmup federated round uses DQA aggregation rather than FedSTO aggregation.",
-        estimate_note="The completed FedSTO log measured 50 warm-up epochs at 0.982 hours, phase-1 rounds at about 10.46 minutes each, and phase-2 rounds at about 11.17 minutes each. With 15 warm-up epochs, 20 phase-1 rounds, and 40 phase-2 rounds, the clean-run estimate is about 11.2 hours before modest DQA overhead, so this is aimed at roughly a 12-hour corrected run.",
+        mode_heading="Guarded 8 Hour Configuration",
+        mode_description="This run keeps the corrected FedSTO Algorithm 1 order, preserves FedSTO-style phase 1, and starts DQA-CWA in phase 2 only. DQA now uses a stronger server anchor, lower class-wise blend, objectness/localization-aware pseudo-label quality, BN-local fallback behavior, and a round guard that skips DQA if pseudo-label counts collapse or spike.",
+        estimate_note="The completed FedSTO log measured 50 warm-up epochs at 0.982 hours, phase-1 rounds at about 10.46 minutes each, and phase-2 rounds at about 11.17 minutes each. With 15 warm-up epochs, 14 phase-1 rounds, and 27 phase-2 rounds, the clean-run estimate is about 7.8 hours before modest DQA overhead, so this notebook is aimed at roughly an 8-hour turnaround.",
         run_mode="blocking",
         run_default=True,
-        eval_default=True,
+        eval_default=False,
     )
     build_evaluation_notebook(
-        notebook_title="03_2 DQA-CWA Corrected 12h Evaluation",
+        notebook_title="03_2 DQA-CWA Guarded 8h Evaluation",
         notebook_path=ROOT / "03_2_dqa_cwa_corrected_12h_evaluation.ipynb",
         workspace_name="efficientteacher_dqa_cwa_corrected_12h",
         stats_dir_name="stats_corrected_12h",
-        notebook_description="This notebook is a read-only analysis pass for the corrected 12-hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, renders the plots that are easiest to read, and compares DQA-CWA against the corrected FedSTO baseline when both paper-protocol summaries exist.",
+        notebook_description="This notebook is a read-only analysis pass for the guarded 8-hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, renders the plots that are easiest to read, and compares DQA-CWA against the corrected FedSTO baseline when both paper-protocol summaries exist.",
     )
 
 

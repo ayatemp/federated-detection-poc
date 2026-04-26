@@ -19,8 +19,10 @@ from pathlib import Path
 
 from dqa_cwa_aggregation import (
     AggregationConfig,
+    aggregate_fedavg_checkpoints,
     aggregate_checkpoints,
     compute_reliability,
+    load_state,
     load_round_stats,
     save_state,
 )
@@ -30,7 +32,7 @@ RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DEFAULT_DQA_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_dqa_cwa"
-DQA_PROTOCOL_VERSION = "dqa_cwa_alg1_server_after_dynamic_client_aggregation_v1"
+DQA_PROTOCOL_VERSION = "dqa_cwa_alg1_phase2_guarded_quality_bnlocal_v2"
 
 
 def _prepare_fedsto_modules(work_root: Path):
@@ -71,6 +73,7 @@ def _dqa_config(args: argparse.Namespace) -> AggregationConfig:
         stability_lambda=args.stability_lambda,
         min_effective_count=args.min_effective_count,
         server_anchor=args.server_anchor,
+        localize_bn=args.localize_bn,
     )
 
 
@@ -250,6 +253,93 @@ def build_round_stats_from_clients(args: argparse.Namespace, phase: int, round_i
     return round_stats
 
 
+def summarize_round_stats(stats) -> dict:
+    total_count = float(sum(sum(max(float(value), 0.0) for value in item.counts) for item in stats))
+    per_class = [
+        float(sum(max(float(item.counts[class_idx]), 0.0) for item in stats))
+        for class_idx in range(len(stats[0].counts))
+    ]
+    weighted_quality_sum = 0.0
+    for item in stats:
+        for count, quality in zip(item.counts, item.mean_quality_scores):
+            weighted_quality_sum += max(float(count), 0.0) * min(max(float(quality), 0.0), 1.0)
+    mean_quality = weighted_quality_sum / total_count if total_count > 0 else 0.0
+    return {
+        "total_count": total_count,
+        "active_classes": int(sum(1 for value in per_class if value > 0)),
+        "per_class_counts": per_class,
+        "mean_quality": mean_quality,
+    }
+
+
+def should_skip_dqa_round(stats, state: dict, args: argparse.Namespace) -> tuple[bool, dict, str]:
+    summary = summarize_round_stats(stats)
+    if not args.enable_dqa_guard:
+        return False, summary, ""
+
+    total_count = float(summary["total_count"])
+    if total_count <= args.dqa_min_round_pseudo_count:
+        return True, summary, (
+            f"round pseudo-label count {total_count:.0f} <= guard minimum "
+            f"{args.dqa_min_round_pseudo_count:.0f}"
+        )
+
+    guard = state.setdefault("round_guard", {})
+    previous_ema = guard.get("total_count_ema")
+    if previous_ema is not None and previous_ema > 0:
+        if args.dqa_drop_ratio_threshold > 0 and total_count < previous_ema * args.dqa_drop_ratio_threshold:
+            return True, summary, (
+                f"round pseudo-label count dropped to {total_count:.0f}, below "
+                f"{args.dqa_drop_ratio_threshold:.2f}x previous EMA {previous_ema:.0f}"
+            )
+        if args.dqa_spike_ratio_threshold > 0 and total_count > previous_ema * args.dqa_spike_ratio_threshold:
+            return True, summary, (
+                f"round pseudo-label count spiked to {total_count:.0f}, above "
+                f"{args.dqa_spike_ratio_threshold:.2f}x previous EMA {previous_ema:.0f}"
+            )
+
+    return False, summary, ""
+
+
+def record_dqa_guard_state(
+    state: dict,
+    *,
+    phase: int,
+    round_idx: int,
+    summary: dict,
+    used_dqa: bool,
+    reason: str,
+    args: argparse.Namespace,
+) -> dict:
+    guard = state.setdefault("round_guard", {})
+    total_count = float(summary["total_count"])
+    previous_ema = guard.get("total_count_ema")
+    if used_dqa:
+        if previous_ema is None:
+            guard["total_count_ema"] = total_count
+        else:
+            guard["total_count_ema"] = (
+                args.dqa_guard_count_ema * float(previous_ema)
+                + (1.0 - args.dqa_guard_count_ema) * total_count
+            )
+    guard["last_total_count"] = total_count
+    guard["last_used_dqa"] = bool(used_dqa)
+    guard["last_reason"] = reason
+    guard.setdefault("history", []).append(
+        {
+            "phase": phase,
+            "round": round_idx,
+            "total_count": total_count,
+            "active_classes": int(summary["active_classes"]),
+            "mean_quality": float(summary["mean_quality"]),
+            "used_dqa": bool(used_dqa),
+            "reason": reason,
+        }
+    )
+    guard["history"] = guard["history"][-200:]
+    return state
+
+
 def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace, dqa_state: Path) -> None:
     dqa_entries = []
     for entry in history:
@@ -274,6 +364,19 @@ def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace
                 f"Cannot rebuild missing DQA-CWA EMA state because stats are missing: {stats_file}"
             )
         stats = load_round_stats(stats_file, args.num_classes)
+        skip_dqa, summary, reason = should_skip_dqa_round(stats, state, args)
+        state = record_dqa_guard_state(
+            state,
+            phase=phase,
+            round_idx=round_idx,
+            summary=summary,
+            used_dqa=not skip_dqa,
+            reason=reason,
+            args=args,
+        )
+        if skip_dqa:
+            rebuilt += 1
+            continue
         state, alpha, source_ids, active = compute_reliability(stats, state, _dqa_config(args))
         state["last_sources"] = source_ids
         state["last_alpha"] = alpha.tolist()
@@ -482,6 +585,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                 )
 
             aggregate_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_dqa_client_aggregate.pt"
+            aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_client_aggregate"
             if phase >= args.dqa_start_phase:
                 stats_file = _stats_path(args.stats_root, phase, round_idx)
                 if not stats_file.exists():
@@ -492,24 +596,54 @@ def run_protocol(args: argparse.Namespace) -> None:
                             f"Missing DQA-CWA stats file: {stats_file}. "
                             "DQA is enabled for every post-warmup round; fix stats export before continuing."
                         )
-                    fedsto.aggregate_checkpoints(local_paths, current_global, aggregate_start, backbone_only=False)
-                else:
-                    stats = load_round_stats(stats_file, args.num_classes)
-                    aggregate_checkpoints(
+                    aggregate_fedavg_checkpoints(
                         client_checkpoints=local_paths,
                         server_checkpoint=current_global,
                         output_checkpoint=aggregate_start,
-                        stats=stats,
-                        state_path=dqa_state,
-                        config=_dqa_config(args),
                         repo_root=REPO_ROOT,
+                        localize_bn=args.localize_bn,
                     )
+                    aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_missing_stats_fedavg_fallback"
+                else:
+                    stats = load_round_stats(stats_file, args.num_classes)
+                    state = load_state(dqa_state)
+                    skip_dqa, summary, reason = should_skip_dqa_round(stats, state, args)
+                    state = record_dqa_guard_state(
+                        state,
+                        phase=phase,
+                        round_idx=round_idx,
+                        summary=summary,
+                        used_dqa=not skip_dqa,
+                        reason=reason,
+                        args=args,
+                    )
+                    save_state(dqa_state, state)
+                    if skip_dqa:
+                        print(f"Skipping DQA-CWA for phase {phase} round {round_idx}: {reason}. Falling back to BN-local FedAvg.")
+                        aggregate_fedavg_checkpoints(
+                            client_checkpoints=local_paths,
+                            server_checkpoint=current_global,
+                            output_checkpoint=aggregate_start,
+                            repo_root=REPO_ROOT,
+                            localize_bn=args.localize_bn,
+                        )
+                        aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_guarded_fedavg_fallback"
+                    else:
+                        aggregate_checkpoints(
+                            client_checkpoints=local_paths,
+                            server_checkpoint=current_global,
+                            output_checkpoint=aggregate_start,
+                            stats=stats,
+                            state_path=dqa_state,
+                            config=_dqa_config(args),
+                            repo_root=REPO_ROOT,
+                        )
             else:
                 fedsto.aggregate_checkpoints(local_paths, current_global, aggregate_start, backbone_only=(phase == 1))
             fedsto.mark_checkpoint_protocol(
                 aggregate_start,
                 args.protocol_version,
-                f"dqa_phase{phase}_round{round_idx:03d}_client_aggregate",
+                aggregate_stage,
             )
 
             server_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt"
@@ -612,8 +746,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dqa-start-phase",
         type=int,
-        default=1,
-        help="First federated phase that uses DQA aggregation. Default 1 means every post-warmup round is DQA.",
+        default=2,
+        help="First federated phase that uses DQA aggregation. Default 2 preserves FedSTO phase 1 and starts DQA in phase 2.",
     )
     parser.add_argument("--fallback-fedavg-without-stats", action="store_true")
     parser.add_argument("--protocol-version", default=DQA_PROTOCOL_VERSION)
@@ -623,10 +757,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--alpha-ema", type=float, default=0.50)
     parser.add_argument("--temperature", type=float, default=1.50)
     parser.add_argument("--uniform-mix", type=float, default=0.05)
-    parser.add_argument("--classwise-blend", type=float, default=0.75)
+    parser.add_argument("--classwise-blend", type=float, default=0.35)
     parser.add_argument("--stability-lambda", type=float, default=0.25)
     parser.add_argument("--min-effective-count", type=float, default=1.0)
-    parser.add_argument("--server-anchor", type=float, default=0.50)
+    parser.add_argument("--server-anchor", type=float, default=1.25)
+    parser.add_argument("--localize-bn", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-dqa-guard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dqa-min-round-pseudo-count", type=float, default=1.0)
+    parser.add_argument("--dqa-drop-ratio-threshold", type=float, default=0.15)
+    parser.add_argument("--dqa-spike-ratio-threshold", type=float, default=3.0)
+    parser.add_argument("--dqa-guard-count-ema", type=float, default=0.70)
     return parser.parse_args()
 
 

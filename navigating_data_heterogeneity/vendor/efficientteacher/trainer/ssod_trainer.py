@@ -92,9 +92,17 @@ class SSODTrainer(Trainer):
         if self.dqa_track_pseudo_stats:
             self.dqa_pseudo_counts = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
             self.dqa_pseudo_confidence_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_objectness_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_class_confidence_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_localization_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_quality_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
         else:
             self.dqa_pseudo_counts = None
             self.dqa_pseudo_confidence_sums = None
+            self.dqa_pseudo_objectness_sums = None
+            self.dqa_pseudo_class_confidence_sums = None
+            self.dqa_pseudo_localization_sums = None
+            self.dqa_pseudo_quality_sums = None
 
     def _update_dqa_pseudo_stats(self, unlabeled_targets, invalid_target_shape):
         if not self.dqa_track_pseudo_stats or invalid_target_shape:
@@ -110,17 +118,61 @@ class SSODTrainer(Trainer):
         if not valid.any():
             return
 
-        class_ids = class_ids[valid]
+        targets = targets[valid]
+        class_ids = targets[:, 1].to(torch.int64)
         if targets.shape[1] > 6:
-            confidences = targets[:, 6].to(torch.float64)[valid].clamp(0.0, 1.0)
+            confidences = targets[:, 6].to(torch.float64).clamp(0.0, 1.0)
         else:
             confidences = torch.ones_like(class_ids, dtype=torch.float64)
+        if targets.shape[1] > 7:
+            objectness = targets[:, 7].to(torch.float64).clamp(0.0, 1.0)
+        else:
+            objectness = confidences.clone()
+        if targets.shape[1] > 8:
+            class_confidences = targets[:, 8].to(torch.float64).clamp(0.0, 1.0)
+        else:
+            class_confidences = confidences.clone()
+
+        boxes = targets[:, 2:6].to(torch.float64)
+        finite_boxes = torch.isfinite(boxes).all(dim=1)
+        x_center, y_center, width, height = boxes.unbind(dim=1)
+        x1 = x_center - width / 2.0
+        y1 = y_center - height / 2.0
+        x2 = x_center + width / 2.0
+        y2 = y_center + height / 2.0
+        overflow = (
+            torch.relu(-x1)
+            + torch.relu(-y1)
+            + torch.relu(x2 - 1.0)
+            + torch.relu(y2 - 1.0)
+        )
+        positive_area = (width > 0.0) & (height > 0.0)
+        localization = (1.0 - overflow.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+        localization = torch.where(finite_boxes & positive_area, localization, torch.zeros_like(localization))
+        quality = (
+            0.50 * confidences
+            + 0.20 * objectness
+            + 0.20 * class_confidences
+            + 0.10 * localization
+        ).clamp(0.0, 1.0)
 
         counts = torch.bincount(class_ids, minlength=self.nc).to(torch.float64)
         confidence_sums = torch.zeros(self.nc, dtype=torch.float64)
+        objectness_sums = torch.zeros(self.nc, dtype=torch.float64)
+        class_confidence_sums = torch.zeros(self.nc, dtype=torch.float64)
+        localization_sums = torch.zeros(self.nc, dtype=torch.float64)
+        quality_sums = torch.zeros(self.nc, dtype=torch.float64)
         confidence_sums.index_add_(0, class_ids, confidences)
+        objectness_sums.index_add_(0, class_ids, objectness)
+        class_confidence_sums.index_add_(0, class_ids, class_confidences)
+        localization_sums.index_add_(0, class_ids, localization)
+        quality_sums.index_add_(0, class_ids, quality)
         self.dqa_pseudo_counts += counts
         self.dqa_pseudo_confidence_sums += confidence_sums
+        self.dqa_pseudo_objectness_sums += objectness_sums
+        self.dqa_pseudo_class_confidence_sums += class_confidence_sums
+        self.dqa_pseudo_localization_sums += localization_sums
+        self.dqa_pseudo_quality_sums += quality_sums
 
     def _write_dqa_pseudo_stats(self):
         if not self.dqa_track_pseudo_stats:
@@ -128,19 +180,51 @@ class SSODTrainer(Trainer):
 
         counts = self.dqa_pseudo_counts.clone()
         confidence_sums = self.dqa_pseudo_confidence_sums.clone()
+        objectness_sums = self.dqa_pseudo_objectness_sums.clone()
+        class_confidence_sums = self.dqa_pseudo_class_confidence_sums.clone()
+        localization_sums = self.dqa_pseudo_localization_sums.clone()
+        quality_sums = self.dqa_pseudo_quality_sums.clone()
         if self.RANK != -1 and dist.is_available() and dist.is_initialized():
             counts_device = counts.to(self.device)
             confidence_sums_device = confidence_sums.to(self.device)
+            objectness_sums_device = objectness_sums.to(self.device)
+            class_confidence_sums_device = class_confidence_sums.to(self.device)
+            localization_sums_device = localization_sums.to(self.device)
+            quality_sums_device = quality_sums.to(self.device)
             dist.all_reduce(counts_device, op=dist.ReduceOp.SUM)
             dist.all_reduce(confidence_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(objectness_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(class_confidence_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(localization_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(quality_sums_device, op=dist.ReduceOp.SUM)
             counts = counts_device.cpu()
             confidence_sums = confidence_sums_device.cpu()
+            objectness_sums = objectness_sums_device.cpu()
+            class_confidence_sums = class_confidence_sums_device.cpu()
+            localization_sums = localization_sums_device.cpu()
+            quality_sums = quality_sums_device.cpu()
 
         if self.RANK not in [-1, 0]:
             return
 
         mean_confidences = [
             (confidence_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_objectness = [
+            (objectness_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_class_confidences = [
+            (class_confidence_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_localization_qualities = [
+            (localization_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_quality_scores = [
+            (quality_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
             for idx in range(self.nc)
         ]
         payload = {
@@ -150,7 +234,15 @@ class SSODTrainer(Trainer):
             "source_run": str(self.save_dir),
             "counts": [float(value) for value in counts.tolist()],
             "confidence_sums": [float(value) for value in confidence_sums.tolist()],
+            "objectness_sums": [float(value) for value in objectness_sums.tolist()],
+            "class_confidence_sums": [float(value) for value in class_confidence_sums.tolist()],
+            "localization_sums": [float(value) for value in localization_sums.tolist()],
+            "quality_sums": [float(value) for value in quality_sums.tolist()],
             "mean_confidences": mean_confidences,
+            "mean_objectness": mean_objectness,
+            "mean_class_confidences": mean_class_confidences,
+            "mean_localization_qualities": mean_localization_qualities,
+            "mean_quality_scores": mean_quality_scores,
         }
         out_path = Path(self.dqa_pseudo_stats_out)
         out_path.parent.mkdir(parents=True, exist_ok=True)

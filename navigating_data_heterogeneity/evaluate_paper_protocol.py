@@ -51,6 +51,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--iou-thres", type=float, default=DEFAULT_VAL_IOU_THRES)
     parser.add_argument("--device", default="")
     parser.add_argument("--python-executable", type=Path, default=None)
+    parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--best-basis",
         choices=("map50", "map50_95"),
@@ -379,8 +381,13 @@ def run_evaluations(
                 "--name",
                 safe_label,
                 "--exist-ok",
-                "--verbose",
             ]
+            if args.plots:
+                cmd.append("--plots")
+            else:
+                cmd.append("--no-plots")
+            if args.verbose:
+                cmd.append("--verbose")
             if args.device:
                 cmd.extend(["--device", args.device])
 
