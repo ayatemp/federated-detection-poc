@@ -30,6 +30,203 @@ def code(text: str) -> dict:
     }
 
 
+CORRECTED_12H_SETTING_TABLES = """
+## DQA-CWA Setting Tables
+
+以下は、このノートブックが読む `efficientteacher_dqa_cwa_corrected_12h` 実験の実数です。FedSTO論文表に対応させていますが、DQA-CWAはこのリポジトリ上の追加手法なので、論文に存在しないDQA固有値は実装値として書いています。
+
+### まず結論
+
+| 項目 | DQA-CWA corrected 12h の値 |
+|---|---:|
+| モデル | EfficientTeacher YOLOv5L style, `efficient-yolov5l.pt` |
+| Backbone / Neck / Head | YoloV5 / YoloV5 / YoloV5 |
+| depth_multiple / width_multiple | 1.00 / 1.00 |
+| 入力サイズ | 640 |
+| クラス数 | 10 |
+| クラス | person / rider / car / bus / truck / bike / motor / traffic light / traffic sign / train |
+| 学習データ合計 | 19,881 images |
+| labeled | 4,881 images, server側, cloudy扱いの `partly cloudy` |
+| unlabeled / pseudoGT対象 | 15,000 images, client側, overcast / rainy / snowy |
+| labeled : unlabeled | 4,881 : 15,000 = 1 : 3.073 |
+| labeled率 / unlabeled率 | 24.55% / 75.45% |
+| client数 | 3 clients |
+| client sampling ratio | 3 / 3 = 1.0 |
+| warmup | 15 epochs |
+| Phase 1 | 14 rounds, FedSTO-style backbone selective training |
+| Phase 2 | 27 rounds, Full Parameter Training + Orthogonal + DQA-CWA |
+| federated rounds合計 | 41 rounds |
+| warmup込みの学習ステップ数 | 15 + 14 + 27 = 56 |
+| local epoch | server / client ともに 1 |
+| batch size | 64 |
+| workers | 0 |
+| requested GPUs | 2 |
+| learning rate lr0 | 0.01 |
+| EMA | 0.999 |
+| NMS conf | 0.1 |
+| NMS IoU | 0.65 |
+
+### BDD100Kの画像枚数構成
+
+| 設定 | serverのGT画像 | clientのunlabeled画像 | pseudoGT対象 | 比率 |
+|---|---:|---:|---:|---:|
+| DQA-CWA warmup | 4,881 | 0 | 0 | GTのみ |
+| DQA-CWA Phase 1 | 4,881 | 15,000 | 15,000 images | 4,881 : 15,000 = 1 : 3.073 |
+| DQA-CWA Phase 2 | 4,881 | 15,000 | 15,000 images | 4,881 : 15,000 = 1 : 3.073 |
+| Fully supervised相当 | 19,881 | 0 | 0 | 全部GTなら19,881 |
+
+### フェーズごとの学習
+
+| フェーズ | 数 | 使うデータ | GT / pseudoGT | 更新する場所 | 集約 |
+|---|---:|---|---|---|---|
+| Warmup | 15 epochs | server labeled 4,881 | GT | 全パラメータ | なし |
+| Phase 1 | 14 rounds | client unlabeled 15,000 + server labeled 4,881 | client側 pseudo label, server側 GT | backboneのみ | FedSTO-style backbone aggregation |
+| Phase 2 | 27 rounds | client unlabeled 15,000 + server labeled 4,881 | client側 pseudo label, server側 GT | 全パラメータ, non_backboneにorthogonal | DQA-CWA class-wise head aggregation + BN-local FedAvg |
+
+### 1 roundあたりの画像比率
+
+| 場所 | 使う画像 | 画像数 / round | 役割 |
+|---|---|---:|---|
+| server | server_cloudy_train | 4,881 | GT supervised update |
+| client 0 | overcast target | 5,000 | pseudoGT生成 + unsupervised update |
+| client 1 | rainy target | 5,000 | pseudoGT生成 + unsupervised update |
+| client 2 | snowy target | 5,000 | pseudoGT生成 + unsupervised update |
+| clients合計 | overcast + rainy + snowy | 15,000 | pseudoGT対象 |
+| 全体 | server + clients | 19,881 | GT : pseudoGT対象 = 4,881 : 15,000 |
+
+### client条件
+
+| 役割 | id | データ | weather条件 | 画像数 |
+|---|---:|---|---|---:|
+| Server | - | labeled | cloudy扱いの `partly cloudy` | 4,881 train / 738 val |
+| Client | 0 | unlabeled | overcast | 5,000 |
+| Client | 1 | unlabeled | rainy | 5,000 |
+| Client | 2 | unlabeled | snowy | 5,000 |
+
+### 20 clients / 100 clients相当
+
+| 項目 | DQA-CWA corrected 12h の値 |
+|---|---:|
+| 実行済みclient数 | 3 |
+| 20 clients実験 | 0 runs, 未実行 |
+| 100 clients実験 | 0 runs, 未実行 |
+| client sampling ratio比較 | 未実行 |
+| 0.1の場合の参加client数 | N/A |
+| 0.2の場合の参加client数 | N/A |
+| 0.5の場合の参加client数 | N/A |
+| 各client単一weather条件 | 3-client実験では true |
+
+### 設定できる主な値
+
+| 設定項目 | DQA-CWA corrected 12h の値 |
+|---|---:|
+| total federated rounds | 41 |
+| warmup_epochs | 15 |
+| Phase 1 rounds | 14 |
+| Phase 2 rounds | 27 |
+| dqa_start_phase | 2 |
+| local epoch | 1 |
+| batch_size | 64 |
+| workers | 0 |
+| gpus | 2 requested |
+| optimizer adam | false |
+| lr0 | 0.01 |
+| lrf | 1.0 |
+| momentum | 0.937 |
+| weight_decay | 0.0005 |
+| hyp warmup_epochs | 0 |
+| warmup_momentum | 0.8 |
+| warmup_bias_lr | 0.1 |
+| class/object balance | class 0.3, object 0.7 |
+| SSOD bbox loss weight | 0.05 |
+| teacher_loss_weight | 1.0 |
+| anchor threshold | 4.0 |
+| ignore threshold | 0.1 to 0.6 |
+| NMS confidence | 0.1 |
+| NMS IoU | 0.65 |
+| EMA rate | 0.999 |
+| cosine EMA | true |
+| img_size | 640 |
+| mosaic | 1.0 |
+| cutout | 0.5 |
+| autoaugment | 0.5 |
+| SSOD scale | 0.8 |
+| hyp scale | 0.9 |
+| mixup | 0.1 |
+| hsv_h / hsv_s / hsv_v | 0.015 / 0.7 / 0.4 |
+| degrees / shear | 0.0 / 0.0 |
+| uncertain_aug | true |
+| pseudo_label_with_obj / bbox / cls | true / true / true |
+| use_ota / multi_label / ignore_obj | false / false / false |
+| with_da_loss / da_loss_weights | false / 0.01 |
+| resample_high_percent / resample_low_percent | 0.25 / 0.99 |
+| Phase 1 train_scope | backbone |
+| Phase 1 orthogonal_weight | 0.0 |
+| Phase 2 train_scope | all |
+| Phase 2 orthogonal_weight | 0.0001 |
+| orthogonal_scope | non_backbone |
+
+### DQA-CWA固有値
+
+| 設定項目 | 値 |
+|---|---:|
+| count_ema | 0.70 |
+| quality_ema | 0.70 |
+| alpha_ema | 0.50 |
+| temperature | 1.50 |
+| uniform_mix | 0.05 |
+| classwise_blend | 0.35 |
+| stability_lambda | 0.25 |
+| min_effective_count | 1.0 |
+| min_quality / max_quality | 0.05 / 1.0 |
+| server_anchor | 1.25 |
+| localize_bn | true |
+| enable_dqa_guard | true |
+| dqa_min_round_pseudo_count | 1.0 |
+| dqa_drop_ratio_threshold | 0.15 |
+| dqa_spike_ratio_threshold | 3.0 |
+| dqa_guard_count_ema | 0.70 |
+| quality formula weights | confidence 0.50, objectness 0.20, class confidence 0.20, localization 0.10 |
+
+### DQAで記録されたpseudoGT box数
+
+| 項目 | 値 |
+|---|---:|
+| DQA statsがあるphase | Phase 2のみ |
+| round-level stats files | 27 |
+| client stats files | 81 |
+| stats files合計 | 108 |
+| DQA使用round | 27 / 27 |
+| DQA guard skip | 0 / 27 |
+| pseudo box総数 | 14,339,686 |
+| pseudo box平均 / round | 531,099.48 |
+| pseudo box最小 | 317,369 at phase2 round 1 |
+| pseudo box最大 | 819,890 at phase2 round 19 |
+| latest phase2 round 27 pseudo box数 | 521,421 |
+| mean quality平均 | 0.706280 |
+| mean quality最小 | 0.573588 at phase2 round 7 |
+| mean quality最大 | 0.803907 at phase2 round 3 |
+| latest phase2 round 27 mean quality | 0.738849 |
+| active classes | 9 classes in 26 rounds, 10 classes in 1 round |
+
+### Phase 2累積pseudo box数 class/client別
+
+| class | total | client 0 overcast | client 1 rainy | client 2 snowy |
+|---|---:|---:|---:|---:|
+| person | 1,110,807 | 626,339 | 170,103 | 314,365 |
+| rider | 31,564 | 24,374 | 2,034 | 5,156 |
+| car | 8,561,515 | 1,506,469 | 2,871,856 | 4,183,190 |
+| bus | 59,039 | 49,772 | 4,754 | 4,513 |
+| truck | 85,510 | 49,799 | 11,096 | 24,615 |
+| bike | 16,601 | 14,006 | 906 | 1,689 |
+| motor | 3,906 | 3,369 | 201 | 336 |
+| traffic light | 1,451,363 | 118,698 | 847,286 | 485,379 |
+| traffic sign | 3,019,368 | 2,453,904 | 208,526 | 356,938 |
+| train | 13 | 0 | 0 | 13 |
+| all classes | 14,339,686 | 4,846,730 | 4,116,762 | 5,376,194 |
+"""
+
+
 def background_run_markdown() -> dict:
     return md(
         """
@@ -415,6 +612,7 @@ def build_notebook(
     stats_dir_name: str,
     runner_log_name: str,
     pid_file_name: str,
+    runner_script_name: str = "run_dqa_cwa_fedsto.py",
     warmup_epochs: int,
     phase1_rounds: int,
     phase2_rounds: int,
@@ -461,7 +659,7 @@ def build_notebook(
             def find_repo_root(start: Optional[Path] = None) -> Path:
                 start = Path.cwd().resolve() if start is None else Path(start).resolve()
                 required = (
-                    "dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py",
+                    "dynamic_quality_aware_classwise_aggregation/{runner_script_name}",
                     "navigating_data_heterogeneity/setup_fedsto_exact_reproduction.py",
                 )
                 candidate_dirs = []
@@ -482,7 +680,7 @@ def build_notebook(
             REPO_ROOT = find_repo_root()
             DQA_ROOT = REPO_ROOT / "dynamic_quality_aware_classwise_aggregation"
             NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
-            RUN_SCRIPT = DQA_ROOT / "run_dqa_cwa_fedsto.py"
+            RUN_SCRIPT = DQA_ROOT / "{runner_script_name}"
             EVAL_SCRIPT = DQA_ROOT / "evaluate_paper_protocol.py"
             NOTEBOOK_GENERATOR = DQA_ROOT / "{GENERATOR_PATH.name}"
             WORK_ROOT = DQA_ROOT / "{workspace_name}"
@@ -890,6 +1088,8 @@ def build_evaluation_notebook(
     workspace_name: str,
     stats_dir_name: str,
     notebook_description: str,
+    setting_tables_markdown: str | None = None,
+    method_label: str = "DQA-CWA",
 ) -> None:
     setup_text = """
     from __future__ import annotations
@@ -940,6 +1140,7 @@ def build_evaluation_notebook(
     RUNS_ROOT = WORK_ROOT / "runs"
     VALIDATION_ROOT = WORK_ROOT / "validation_reports"
     NOTEBOOK_GENERATOR = DQA_ROOT / "__GENERATOR_NAME__"
+    METHOD_LABEL = "__METHOD_LABEL__"
 
     FEDSTO_WORK_ROOT = NAV_ROOT / "efficientteacher_fedsto"
     FEDSTO_TRAINING_SUMMARY = FEDSTO_WORK_ROOT / "validation_reports" / "tables" / "training_run_summary.csv"
@@ -1040,6 +1241,7 @@ def build_evaluation_notebook(
         setup_text.replace("__WORKSPACE_NAME__", workspace_name)
         .replace("__STATS_DIR_NAME__", stats_dir_name)
         .replace("__GENERATOR_NAME__", GENERATOR_PATH.name)
+        .replace("__METHOD_LABEL__", method_label)
     )
 
     cells = [
@@ -1847,7 +2049,7 @@ def build_evaluation_notebook(
                 return pd.DataFrame(rows)
 
 
-            comparison_frames = [comparable_checkpoint_rows(run_summary, "DQA-CWA")]
+            comparison_frames = [comparable_checkpoint_rows(run_summary, METHOD_LABEL)]
             if FEDSTO_TRAINING_SUMMARY.exists():
                 fedsto_summary = pd.read_csv(FEDSTO_TRAINING_SUMMARY)
                 comparison_frames.append(comparable_checkpoint_rows(fedsto_summary, "FedSTO"))
@@ -1885,7 +2087,7 @@ def build_evaluation_notebook(
                 fedsto_server = fedsto_summary[fedsto_summary["role"].isin(["warmup", "server"])].copy()
 
                 compare_rows = []
-                for method, frame in [("DQA-CWA", server_summary.copy()), ("FedSTO", fedsto_server.copy())]:
+                for method, frame in [(METHOD_LABEL, server_summary.copy()), ("FedSTO", fedsto_server.copy())]:
                     method_df = frame[frame["role"] == "server"].copy()
                     if method_df.empty:
                         continue
@@ -1948,7 +2150,7 @@ def build_evaluation_notebook(
             dqa_paper_eval_summary = VALIDATION_ROOT / "paper_protocol_eval_summary.csv"
             if dqa_paper_eval_summary.exists():
                 dqa_eval_df = pd.read_csv(dqa_paper_eval_summary)
-                dqa_eval_df.insert(0, "method", "DQA-CWA")
+                dqa_eval_df.insert(0, "method", METHOD_LABEL)
                 paper_eval_frames.append(dqa_eval_df)
 
             if FEDSTO_PAPER_EVAL_SUMMARY.exists():
@@ -2053,6 +2255,9 @@ def build_evaluation_notebook(
             """
         ),
     ]
+
+    if setting_tables_markdown:
+        cells.insert(3, md(setting_tables_markdown))
 
     notebook = {
         "cells": cells,
@@ -2744,6 +2949,38 @@ def main() -> None:
         workspace_name="efficientteacher_dqa_cwa_corrected_12h",
         stats_dir_name="stats_corrected_12h",
         notebook_description="This notebook is a read-only analysis pass for the guarded 8-hour DQA-CWA run. It does not launch training by default. Instead it pulls together the finished run artifacts, writes a compact training summary table, renders the plots that are easiest to read, and compares DQA-CWA against the corrected FedSTO baseline when both paper-protocol summaries exist.",
+        setting_tables_markdown=CORRECTED_12H_SETTING_TABLES,
+    )
+    build_notebook(
+        notebook_title="04 DQA-CWA v2 Server-Anchored Reproduction",
+        notebook_path=ROOT / "04_dqa_ver2_reproduction.ipynb",
+        workspace_name="efficientteacher_dqa_ver2",
+        stats_dir_name="stats_dqa_ver2",
+        runner_log_name="dqa_ver2_runner.out",
+        pid_file_name="dqa_ver2_runner.pid",
+        runner_script_name="run_dqa_cwa_fedsto_v2.py",
+        warmup_epochs=15,
+        phase1_rounds=14,
+        phase2_rounds=27,
+        batch_size=64,
+        workers=0,
+        gpus=2,
+        master_port=29513,
+        min_free_gib=70,
+        mode_heading="DQA v2 Guarded 8 Hour Configuration",
+        mode_description="This run keeps the same schedule and non-implementation settings as 03: corrected FedSTO Algorithm 1 order, FedSTO-style phase 1, DQA starting in phase 2, the same guard thresholds, and the same batch/runtime settings. The only intended change is the DQA v2 aggregation implementation: client updates are applied as quality-weighted residuals on top of the labeled server checkpoint, with a minimum server class-wise anchor to reduce late-round drift.",
+        estimate_note="This uses the same warm-up, phase-1, and phase-2 schedule as 03, so the clean-run estimate remains about 7.8 hours before modest DQA overhead on the same hardware.",
+        run_mode="blocking",
+        run_default=True,
+        eval_default=False,
+    )
+    build_evaluation_notebook(
+        notebook_title="04_2 DQA-CWA v2 Evaluation",
+        notebook_path=ROOT / "04_2_dqa_ver2_evaluation.ipynb",
+        workspace_name="efficientteacher_dqa_ver2",
+        stats_dir_name="stats_dqa_ver2",
+        notebook_description="This notebook is a read-only analysis pass for the DQA-CWA v2 run. It follows the same evaluation layout as 03_2, but points at the v2 workspace and labels the method as DQA-CWA v2 in comparisons.",
+        method_label="DQA-CWA v2",
     )
     build_paper_eval_notebook(
         notebook_title="02_4 DQA-CWA Paper Protocol Evaluation",

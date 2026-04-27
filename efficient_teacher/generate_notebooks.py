@@ -876,6 +876,11 @@ def evaluation_notebook() -> list[dict]:
         ),
         code(
             """
+            print("hello world")
+            """
+        ),
+        code(
+            """
             from __future__ import annotations
 
             import json
@@ -950,6 +955,152 @@ def evaluation_notebook() -> list[dict]:
             print("localema workspace:", LOCALEMA_WORK_ROOT)
             """
         ),
+
+md(
+    """
+    ## Stitched Server Metric Curves for 00 and 01
+
+    Warmup, phase1, and phase2 server validation metrics are plotted on one stitched timeline. This is the compact view for comparing 00 LocalEMA and 01 EfficientTeacher.
+    """
+),
+code(
+    """
+    STITCHED_METHODS = {
+        "00 LocalEMA": LOCALEMA_WORK_ROOT,
+        "01 EfficientTeacher": WORK_ROOT,
+    }
+    STAGE_COLORS = {
+        "warmup": "#4C72B0",
+        "phase1": "#DD8452",
+        "phase2": "#55A868",
+    }
+    SERVER_RUN_RE = re.compile(r"et_phase(?P<phase>[12])_round(?P<round>\d{3})_server")
+    METRIC_SPECS = [
+        ("metrics/mAP_0.5", "mAP@0.5"),
+        ("metrics/mAP_0.5:0.95", "mAP@0.5:0.95"),
+        ("metrics/precision", "precision"),
+        ("metrics/recall", "recall"),
+    ]
+
+
+    def read_results_csv(path: Path) -> pd.DataFrame:
+        return pd.read_csv(path, skipinitialspace=True).rename(columns=lambda col: col.strip())
+
+
+    def load_server_round_summary(workspace: Path) -> pd.DataFrame:
+        rows = []
+        for result_path in sorted((workspace / "runs").glob("et_phase*_round*_server/results.csv")):
+            match = SERVER_RUN_RE.fullmatch(result_path.parent.name)
+            if not match:
+                continue
+            df = read_results_csv(result_path)
+            if df.empty:
+                continue
+            last = df.iloc[-1]
+            row = {
+                "phase": int(match.group("phase")),
+                "round": int(match.group("round")),
+            }
+            for metric_col, _ in METRIC_SPECS:
+                row[metric_col] = float(last.get(metric_col, np.nan))
+            rows.append(row)
+        return pd.DataFrame(rows).sort_values(["phase", "round"]) if rows else pd.DataFrame()
+
+
+    def load_warmup_curve(workspace: Path) -> pd.DataFrame:
+        warmup_path = workspace / "runs" / "runtime_server_warmup" / "results.csv"
+        if not warmup_path.exists():
+            return pd.DataFrame(columns=["timeline", "stage", *[metric for metric, _ in METRIC_SPECS]])
+        df = read_results_csv(warmup_path)
+        if df.empty:
+            return pd.DataFrame(columns=["timeline", "stage", *[metric for metric, _ in METRIC_SPECS]])
+        curve = df[["epoch", *[metric for metric, _ in METRIC_SPECS]]].copy()
+        curve["timeline"] = curve["epoch"].astype(float) + 1
+        curve["stage"] = "warmup"
+        return curve[["timeline", "stage", *[metric for metric, _ in METRIC_SPECS]]]
+
+
+    def server_phase_curve(summary: pd.DataFrame, phase: int, stage: str, offset: int) -> pd.DataFrame:
+        if summary.empty:
+            return pd.DataFrame(columns=["timeline", "stage", "round", *[metric for metric, _ in METRIC_SPECS]])
+        phase_df = summary[summary["phase"].eq(phase)].copy()
+        if phase_df.empty:
+            return pd.DataFrame(columns=["timeline", "stage", "round", *[metric for metric, _ in METRIC_SPECS]])
+        phase_df["timeline"] = offset + phase_df["round"]
+        phase_df["stage"] = stage
+        return phase_df[["timeline", "stage", "round", *[metric for metric, _ in METRIC_SPECS]]]
+
+
+    def stitched_server_curve(workspace: Path) -> tuple[pd.DataFrame, int, int]:
+        warmup = load_warmup_curve(workspace)
+        warmup_steps = int(warmup["timeline"].max()) if not warmup.empty else 0
+        summary = load_server_round_summary(workspace)
+        phase1_steps = int(summary.loc[summary["phase"].eq(1), "round"].max()) if not summary.empty and summary["phase"].eq(1).any() else 0
+        curve = pd.concat(
+            [
+                warmup,
+                server_phase_curve(summary, 1, "phase1", warmup_steps),
+                server_phase_curve(summary, 2, "phase2", warmup_steps + phase1_steps),
+            ],
+            ignore_index=True,
+        )
+        return curve, warmup_steps, phase1_steps
+
+
+    def plot_stage_line(ax, data: pd.DataFrame, metric_col: str) -> None:
+        data = data.dropna(subset=[metric_col]).copy()
+        if data.empty:
+            return
+        for stage in ["warmup", "phase1", "phase2"]:
+            part = data[data["stage"].eq(stage)]
+            if part.empty:
+                continue
+            ax.plot(part["timeline"], part[metric_col], color=STAGE_COLORS[stage], linewidth=2, label=stage)
+
+
+    def plot_stitched_metrics(method: str, workspace: Path) -> None:
+        curve, warmup_steps, phase1_steps = stitched_server_curve(workspace)
+        if curve.empty:
+            print(f"{method}: no server metric results found in {workspace}")
+            return
+
+        fig, axes = plt.subplots(2, 2, figsize=(18, 10), sharex=True)
+        fig.suptitle(method, fontsize=16, y=1.02)
+
+        for ax, (metric_col, title) in zip(axes.flat, METRIC_SPECS):
+            plot_stage_line(ax, curve, metric_col)
+            if warmup_steps:
+                ax.axvline(warmup_steps + 0.5, color="gray", linestyle="--", linewidth=1)
+            if phase1_steps:
+                ax.axvline(warmup_steps + phase1_steps + 0.5, color="gray", linestyle="--", linewidth=1)
+
+            valid = curve.dropna(subset=[metric_col])
+            if not valid.empty:
+                best_idx = valid[metric_col].astype(float).idxmax()
+                best_row = valid.loc[best_idx]
+                ax.scatter([best_row["timeline"]], [best_row[metric_col]], color="black", s=50, zorder=5)
+                ax.annotate(
+                    f"{best_row['stage']} peak\n{best_row[metric_col]:.3f}",
+                    (best_row["timeline"], best_row[metric_col]),
+                    textcoords="offset points",
+                    xytext=(8, 8),
+                    fontsize=10,
+                )
+
+            ax.set_title(title)
+            ax.set_xlabel("stitched timeline step")
+            ax.set_ylabel(title)
+            ax.grid(True, alpha=0.35)
+            ax.legend(title="stage", loc="best")
+
+        plt.tight_layout()
+        plt.show()
+
+
+    for method, workspace in STITCHED_METHODS.items():
+        plot_stitched_metrics(method, workspace)
+    """
+),
         md(
             """
             ## 1. Artifact Status
