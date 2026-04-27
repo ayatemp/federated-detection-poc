@@ -29,6 +29,20 @@ def code(text: str) -> dict:
     }
 
 
+def replace_placeholders(cells: list[dict], replacements: dict[str, str]) -> list[dict]:
+    for cell in cells:
+        source = cell.get("source")
+        if not isinstance(source, list):
+            continue
+        next_source = []
+        for line in source:
+            for key, value in replacements.items():
+                line = line.replace(key, value)
+            next_source.append(line)
+        cell["source"] = next_source
+    return cells
+
+
 def write_notebook(path: Path, cells: list[dict]) -> None:
     payload = {
         "cells": cells,
@@ -49,13 +63,20 @@ def write_notebook(path: Path, cells: list[dict]) -> None:
     path.write_text(json.dumps(payload, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def training_notebook() -> list[dict]:
-    return [
+def training_notebook(
+    *,
+    title: str = "01 EfficientTeacher Single-Client Training",
+    intro: str = "This notebook runs the EfficientTeacher baseline under the same practical conditions as the guarded DQA run: YOLOv5L, BDD100K paper20k, one pseudo-label client epoch per round, and one labeled server-GT epoch after every round. The only intentional change is `NUM_CLIENTS = 1`.",
+    work_dir_name: str = "efficientteacher_single_client",
+    local_ema: bool = False,
+    master_port: int = 29520,
+) -> list[dict]:
+    cells = [
         md(
             """
-            # 01 EfficientTeacher Single-Client Training
+            # __TITLE__
 
-            This notebook runs the EfficientTeacher baseline under the same practical conditions as the guarded DQA run: YOLOv5L, BDD100K paper20k, one pseudo-label client epoch per round, and one labeled server-GT epoch after every round. The only intentional change is `NUM_CLIENTS = 1`.
+            __INTRO__
             """
         ),
         code(
@@ -90,9 +111,16 @@ def training_notebook() -> list[dict]:
 
             REPO_ROOT = find_repo_root()
             ET_ROOT = REPO_ROOT / "efficient_teacher"
+            DQA_ROOT = REPO_ROOT / "dynamic_quality_aware_classwise_aggregation"
             RUN_SCRIPT = ET_ROOT / "run_efficient_teacher_single_client.py"
-            WORK_ROOT = ET_ROOT / "efficientteacher_single_client"
+            WORK_ROOT = ET_ROOT / "__WORK_DIR_NAME__"
             PSEUDO_STATS_ROOT = WORK_ROOT / "pseudo_stats"
+            DQA_WARMUP_CHECKPOINT = (
+                DQA_ROOT
+                / "efficientteacher_dqa_cwa_corrected_12h"
+                / "global_checkpoints"
+                / "round000_warmup.pt"
+            )
             PYTHON_BIN = Path(sys.executable)
             TRAIN_LOG = WORK_ROOT / "efficientteacher_latest.log"
 
@@ -118,8 +146,11 @@ def training_notebook() -> list[dict]:
             BATCH_SIZE = 64
             WORKERS = 0
             REQUESTED_GPUS = 2
-            MASTER_PORT = 29520
+            MASTER_PORT = __MASTER_PORT__
             MIN_FREE_GIB = 70
+            LOCAL_EMA = __LOCAL_EMA__
+            USE_DQA_WARMUP_CHECKPOINT = True
+            WARMUP_CHECKPOINT = DQA_WARMUP_CHECKPOINT if USE_DQA_WARMUP_CHECKPOINT else None
             APPEND_TRAIN_LOG = False
             EXTRA_RUN_ARGS = []
 
@@ -144,6 +175,8 @@ def training_notebook() -> list[dict]:
                 "batch_size": BATCH_SIZE,
                 "workers": WORKERS,
                 "gpus": GPUS,
+                "local_ema": LOCAL_EMA,
+                "warmup_checkpoint": str(WARMUP_CHECKPOINT) if WARMUP_CHECKPOINT else None,
                 "workspace": str(WORK_ROOT),
             }
             config_summary
@@ -238,6 +271,9 @@ def training_notebook() -> list[dict]:
             ]
             if CLIENT_WEATHER:
                 dry_run_cmd.extend(["--client-weather", CLIENT_WEATHER])
+            dry_run_cmd.append("--local-ema" if LOCAL_EMA else "--no-local-ema")
+            if WARMUP_CHECKPOINT is not None:
+                dry_run_cmd.extend(["--warmup-checkpoint", str(WARMUP_CHECKPOINT)])
 
             subprocess.run(dry_run_cmd, cwd=REPO_ROOT, check=True)
             """
@@ -247,6 +283,8 @@ def training_notebook() -> list[dict]:
             ## 4. Start or Resume Training
 
             This cell is restartable. The runner reuses valid checkpoints, appends compact status to notebook output, and writes full EfficientTeacher logs to `efficientteacher_latest.log`.
+
+            When `WARMUP_CHECKPOINT` points at the DQA warm-up checkpoint, the run skips raw-pretrained warm-up training and seeds `round000_warmup.pt` from that DQA artifact instead. If this workspace is already running with a raw-pretrained warm-up, stop that old process before rerunning this cell.
             """
         ),
         code(
@@ -286,6 +324,9 @@ def training_notebook() -> list[dict]:
             ]
             if CLIENT_WEATHER:
                 train_cmd.extend(["--client-weather", CLIENT_WEATHER])
+            train_cmd.append("--local-ema" if LOCAL_EMA else "--no-local-ema")
+            if WARMUP_CHECKPOINT is not None:
+                train_cmd.extend(["--warmup-checkpoint", str(WARMUP_CHECKPOINT)])
             if APPEND_TRAIN_LOG:
                 train_cmd.append("--append-train-log")
             if FORCE_RESTART:
@@ -375,6 +416,31 @@ def training_notebook() -> list[dict]:
             """
         ),
     ]
+    return replace_placeholders(
+        cells,
+        {
+            "__TITLE__": title,
+            "__INTRO__": intro,
+            "__WORK_DIR_NAME__": work_dir_name,
+            "__LOCAL_EMA__": str(bool(local_ema)),
+            "__MASTER_PORT__": str(master_port),
+        },
+    )
+
+
+def localema_training_notebook() -> list[dict]:
+    return training_notebook(
+        title="00 LocalEMA Single-Client Training",
+        intro=(
+            "This notebook runs the LocalEMA comparison under the same DQA-matched "
+            "single-client EfficientTeacher protocol. The only method change versus "
+            "`01_efficient_teacher_training.ipynb` is that each client's previous EMA "
+            "teacher is carried into the next round."
+        ),
+        work_dir_name="efficientteacher_localema",
+        local_ema=True,
+        master_port=29521,
+    )
 
 
 def evaluation_notebook() -> list[dict]:
@@ -427,11 +493,16 @@ def evaluation_notebook() -> list[dict]:
             REPO_ROOT = find_repo_root()
             ET_ROOT = REPO_ROOT / "efficient_teacher"
             WORK_ROOT = ET_ROOT / "efficientteacher_single_client"
+            LOCALEMA_WORK_ROOT = ET_ROOT / "efficientteacher_localema"
             RUNS_ROOT = WORK_ROOT / "runs"
             PSEUDO_STATS_ROOT = WORK_ROOT / "pseudo_stats"
             VALIDATION_ROOT = WORK_ROOT / "validation_reports"
             EVAL_SCRIPT = ET_ROOT / "evaluate_paper_protocol.py"
             PYTHON_BIN = Path(sys.executable)
+            METHOD_WORKSPACES = {
+                "EfficientTeacher-1C": WORK_ROOT,
+                "LocalEMA-1C": LOCALEMA_WORK_ROOT,
+            }
 
             DQA_PAPER_EVAL = (
                 REPO_ROOT
@@ -454,6 +525,7 @@ def evaluation_notebook() -> list[dict]:
                 plt.style.use("ggplot")
             pd.options.display.max_columns = 200
             print("workspace:", WORK_ROOT)
+            print("localema workspace:", LOCALEMA_WORK_ROOT)
             """
         ),
         md(
@@ -474,25 +546,30 @@ def evaluation_notebook() -> list[dict]:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
             history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else []
 
-            artifacts = [
-                ("workspace", WORK_ROOT),
-                ("manifest", manifest_path),
-                ("history", history_path),
-                ("runs", RUNS_ROOT),
-                ("pseudo_stats", PSEUDO_STATS_ROOT),
-                ("global_checkpoints", WORK_ROOT / "global_checkpoints"),
-                ("paper_eval_summary", VALIDATION_ROOT / "paper_protocol_eval_summary.csv"),
-            ]
+            artifacts = []
+            for method, workspace in METHOD_WORKSPACES.items():
+                artifacts.extend(
+                    [
+                        (method, "workspace", workspace),
+                        (method, "manifest", workspace / "manifest.json"),
+                        (method, "history", workspace / "history.json"),
+                        (method, "runs", workspace / "runs"),
+                        (method, "pseudo_stats", workspace / "pseudo_stats"),
+                        (method, "global_checkpoints", workspace / "global_checkpoints"),
+                        (method, "paper_eval_summary", workspace / "validation_reports" / "paper_protocol_eval_summary.csv"),
+                    ]
+                )
             display(
                 pd.DataFrame(
                     [
                         {
+                            "method": method,
                             "artifact": label,
                             "path": str(path),
                             "exists": path.exists(),
                             "modified_utc": modified_utc(path),
                         }
-                        for label, path in artifacts
+                        for method, label, path in artifacts
                     ]
                 )
             )
@@ -586,6 +663,59 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
+            ## 3. ET vs LocalEMA Training Summary
+            """
+        ),
+        code(
+            """
+            def load_results_for_workspace(workspace: Path, method: str) -> pd.DataFrame:
+                rows = []
+                for result_path in sorted((workspace / "runs").glob("*/results.csv")):
+                    run_name = result_path.parent.name
+                    df = pd.read_csv(result_path, skipinitialspace=True).rename(columns=lambda col: col.strip())
+                    if df.empty:
+                        continue
+                    meta = parse_run_name(run_name)
+                    last = df.iloc[-1].to_dict()
+                    best_idx = df["metrics/mAP_0.5"].astype(float).idxmax() if "metrics/mAP_0.5" in df else df.index[-1]
+                    best = df.loc[best_idx].to_dict()
+                    rows.append(
+                        {
+                            "method": method,
+                            "workspace": str(workspace),
+                            "run_name": run_name,
+                            **meta,
+                            "epochs_logged": len(df),
+                            "final_precision": last.get("metrics/precision"),
+                            "final_recall": last.get("metrics/recall"),
+                            "final_map50": last.get("metrics/mAP_0.5"),
+                            "final_map50_95": last.get("metrics/mAP_0.5:0.95"),
+                            "best_map50": best.get("metrics/mAP_0.5"),
+                            "train_box_loss": last.get("train/box_loss"),
+                            "train_obj_loss": last.get("train/obj_loss"),
+                            "train_cls_loss": last.get("train/cls_loss"),
+                        }
+                    )
+                return pd.DataFrame(rows)
+
+
+            method_summaries = [load_results_for_workspace(workspace, method) for method, workspace in METHOD_WORKSPACES.items()]
+            method_summary_df = pd.concat([df for df in method_summaries if not df.empty], ignore_index=True) if any(
+                not df.empty for df in method_summaries
+            ) else pd.DataFrame()
+            if not method_summary_df.empty:
+                method_summary_df["timeline"] = np.where(
+                    method_summary_df["phase"] == 0,
+                    0,
+                    method_summary_df["phase"].astype(float) * 1000 + method_summary_df["round"].astype(float),
+                )
+                display(method_summary_df.sort_values(["method", "phase", "round", "role"]).tail(30).round(4))
+            else:
+                print("No ET/LocalEMA training summaries found yet.")
+            """
+        ),
+        md(
+            """
             ## 3. Metric Curves
             """
         ),
@@ -640,7 +770,35 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
-            ## 4. Loss Curves
+            ## 4. ET vs LocalEMA Curves
+            """
+        ),
+        code(
+            """
+            if not method_summary_df.empty:
+                server_methods = method_summary_df[method_summary_df["role"].isin(["warmup", "server"])].copy()
+                client_methods = method_summary_df[method_summary_df["role"].eq("client")].copy()
+                if not server_methods.empty:
+                    fig, axes = plt.subplots(1, 2, figsize=(17, 5))
+                    plot_line(axes[0], server_methods, "timeline", "final_map50", hue="method")
+                    plot_line(axes[1], server_methods, "timeline", "final_map50_95", hue="method")
+                    axes[0].set_title("server/warmup mAP@0.5 by method")
+                    axes[1].set_title("server/warmup mAP@0.5:0.95 by method")
+                    plt.tight_layout()
+                    plt.show()
+                if not client_methods.empty:
+                    fig, axes = plt.subplots(1, 2, figsize=(17, 5))
+                    plot_line(axes[0], client_methods, "timeline", "final_map50", hue="method")
+                    plot_line(axes[1], client_methods, "timeline", "final_recall", hue="method")
+                    axes[0].set_title("client mAP@0.5 by method")
+                    axes[1].set_title("client recall by method")
+                    plt.tight_layout()
+                    plt.show()
+            """
+        ),
+        md(
+            """
+            ## 5. Loss Curves
             """
         ),
         code(
@@ -659,7 +817,7 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
-            ## 5. Pseudo-Label Stats
+            ## 6. Pseudo-Label Stats
             """
         ),
         code(
@@ -669,44 +827,46 @@ def evaluation_notebook() -> list[dict]:
             pseudo_class_rows = []
             pattern = re.compile(r"phase(?P<phase>[12])_round(?P<round>\\d{3})_client(?P<client>\\d+)_(?P<weather>.+)\\.json")
 
-            for path in sorted(PSEUDO_STATS_ROOT.glob("phase*_round*_client*.json")):
-                match = pattern.fullmatch(path.name)
-                if not match:
-                    continue
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                counts = np.array(payload.get("counts", []), dtype=float)
-                mean_conf = np.array(payload.get("mean_confidences", [0] * len(counts)), dtype=float)
-                mean_quality = np.array(payload.get("mean_quality_scores", mean_conf), dtype=float)
-                total = counts.sum()
-                weighted_conf = float((counts * mean_conf).sum() / total) if total > 0 else 0.0
-                weighted_quality = float((counts * mean_quality).sum() / total) if total > 0 else 0.0
-                meta = {
-                    "phase": int(match.group("phase")),
-                    "round": int(match.group("round")),
-                    "client": int(match.group("client")),
-                    "weather": match.group("weather"),
-                    "file": str(path),
-                }
-                pseudo_summary_rows.append(
-                    {
-                        **meta,
-                        "total_pseudo": float(total),
-                        "active_classes": int((counts > 0).sum()),
-                        "weighted_confidence": weighted_conf,
-                        "weighted_quality": weighted_quality,
+            for method, workspace in METHOD_WORKSPACES.items():
+                for path in sorted((workspace / "pseudo_stats").glob("phase*_round*_client*.json")):
+                    match = pattern.fullmatch(path.name)
+                    if not match:
+                        continue
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    counts = np.array(payload.get("counts", []), dtype=float)
+                    mean_conf = np.array(payload.get("mean_confidences", [0] * len(counts)), dtype=float)
+                    mean_quality = np.array(payload.get("mean_quality_scores", mean_conf), dtype=float)
+                    total = counts.sum()
+                    weighted_conf = float((counts * mean_conf).sum() / total) if total > 0 else 0.0
+                    weighted_quality = float((counts * mean_quality).sum() / total) if total > 0 else 0.0
+                    meta = {
+                        "method": method,
+                        "phase": int(match.group("phase")),
+                        "round": int(match.group("round")),
+                        "client": int(match.group("client")),
+                        "weather": match.group("weather"),
+                        "file": str(path),
                     }
-                )
-                for class_idx, count in enumerate(counts):
-                    pseudo_class_rows.append(
+                    pseudo_summary_rows.append(
                         {
                             **meta,
-                            "class_idx": class_idx,
-                            "class_name": class_names[class_idx] if class_idx < len(class_names) else str(class_idx),
-                            "count": float(count),
-                            "mean_confidence": float(mean_conf[class_idx]) if class_idx < len(mean_conf) else 0.0,
-                            "mean_quality": float(mean_quality[class_idx]) if class_idx < len(mean_quality) else 0.0,
+                            "total_pseudo": float(total),
+                            "active_classes": int((counts > 0).sum()),
+                            "weighted_confidence": weighted_conf,
+                            "weighted_quality": weighted_quality,
                         }
                     )
+                    for class_idx, count in enumerate(counts):
+                        pseudo_class_rows.append(
+                            {
+                                **meta,
+                                "class_idx": class_idx,
+                                "class_name": class_names[class_idx] if class_idx < len(class_names) else str(class_idx),
+                                "count": float(count),
+                                "mean_confidence": float(mean_conf[class_idx]) if class_idx < len(mean_conf) else 0.0,
+                                "mean_quality": float(mean_quality[class_idx]) if class_idx < len(mean_quality) else 0.0,
+                            }
+                        )
 
             pseudo_summary = pd.DataFrame(pseudo_summary_rows)
             pseudo_by_class = pd.DataFrame(pseudo_class_rows)
@@ -717,9 +877,9 @@ def evaluation_notebook() -> list[dict]:
                 display(pseudo_summary.tail(20).round(4))
 
                 fig, axes = plt.subplots(1, 3, figsize=(20, 5))
-                plot_line(axes[0], pseudo_summary, "timeline", "total_pseudo", hue="weather")
-                plot_line(axes[1], pseudo_summary, "timeline", "weighted_confidence", hue="weather")
-                plot_line(axes[2], pseudo_summary, "timeline", "weighted_quality", hue="weather")
+                plot_line(axes[0], pseudo_summary, "timeline", "total_pseudo", hue="method")
+                plot_line(axes[1], pseudo_summary, "timeline", "weighted_confidence", hue="method")
+                plot_line(axes[2], pseudo_summary, "timeline", "weighted_quality", hue="method")
                 axes[0].set_title("pseudo-label count")
                 axes[1].set_title("weighted confidence")
                 axes[2].set_title("weighted quality")
@@ -731,14 +891,20 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
-            ## 6. Class-Wise Pseudo-Label Heatmap
+            ## 7. Class-Wise Pseudo-Label Heatmap
             """
         ),
         code(
             """
             if not pseudo_by_class.empty:
                 heatmap_df = pseudo_by_class.copy()
-                heatmap_df["round_label"] = "p" + heatmap_df["phase"].astype(str) + "r" + heatmap_df["round"].astype(str).str.zfill(3)
+                heatmap_df["round_label"] = (
+                    heatmap_df["method"].astype(str)
+                    + "_p"
+                    + heatmap_df["phase"].astype(str)
+                    + "r"
+                    + heatmap_df["round"].astype(str).str.zfill(3)
+                )
                 pivot = heatmap_df.pivot_table(index="class_name", columns="round_label", values="count", aggfunc="sum", fill_value=0)
                 plt.figure(figsize=(max(12, 0.35 * pivot.shape[1]), 7))
                 if sns is not None:
@@ -757,7 +923,7 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
-            ## 7. Paper-Protocol Evaluation
+            ## 8. Paper-Protocol Evaluation
 
             Set `RUN_PAPER_EVAL = True` to run the shared per-weather validation for warmup, phase1 final, phase2 best, and phase2 final checkpoints.
             """
@@ -768,43 +934,57 @@ def evaluation_notebook() -> list[dict]:
             PAPER_EVAL_SPLITS = "cloudy,overcast,rainy,snowy,total"
             PAPER_EVAL_BATCH_SIZE = 8
 
-            eval_cmd = [
-                str(PYTHON_BIN),
-                str(EVAL_SCRIPT),
-                "--workspace",
-                str(WORK_ROOT),
-                "--splits",
-                PAPER_EVAL_SPLITS,
-                "--batch-size",
-                str(PAPER_EVAL_BATCH_SIZE),
+            eval_cmds = [
+                [
+                    str(PYTHON_BIN),
+                    str(EVAL_SCRIPT),
+                    "--workspace",
+                    str(workspace),
+                    "--splits",
+                    PAPER_EVAL_SPLITS,
+                    "--batch-size",
+                    str(PAPER_EVAL_BATCH_SIZE),
+                ]
+                for workspace in METHOD_WORKSPACES.values()
+                if workspace.exists()
             ]
             if RUN_PAPER_EVAL:
-                subprocess.run(eval_cmd, cwd=REPO_ROOT, check=True)
+                for eval_cmd in eval_cmds:
+                    subprocess.run(eval_cmd, cwd=REPO_ROOT, check=True)
             else:
                 print("Set RUN_PAPER_EVAL = True to run:")
-                print(" ".join(eval_cmd))
+                for eval_cmd in eval_cmds:
+                    print(" ".join(eval_cmd))
             """
         ),
         md(
             """
-            ## 8. Paper-Protocol Results
+            ## 9. Paper-Protocol Results
             """
         ),
         code(
             """
             paper_summary_path = VALIDATION_ROOT / "paper_protocol_eval_summary.csv"
-            if paper_summary_path.exists():
-                paper_df = pd.read_csv(paper_summary_path)
+            paper_frames = []
+            for method, workspace in METHOD_WORKSPACES.items():
+                path = workspace / "validation_reports" / "paper_protocol_eval_summary.csv"
+                if path.exists():
+                    df = pd.read_csv(path)
+                    df.insert(0, "method", method)
+                    paper_frames.append(df)
+
+            if paper_frames:
+                paper_df = pd.concat(paper_frames, ignore_index=True)
                 display(paper_df.round(4))
                 ok_rows = paper_df[paper_df["status"].eq("ok")].copy()
                 if not ok_rows.empty:
                     fig, axes = plt.subplots(1, 2, figsize=(17, 5))
                     if sns is not None:
-                        sns.barplot(data=ok_rows, x="split", y="map50", hue="checkpoint_label", ax=axes[0])
-                        sns.barplot(data=ok_rows, x="split", y="map50_95", hue="checkpoint_label", ax=axes[1])
+                        sns.barplot(data=ok_rows, x="split", y="map50", hue="method", ax=axes[0])
+                        sns.barplot(data=ok_rows, x="split", y="map50_95", hue="method", ax=axes[1])
                     else:
-                        ok_rows.pivot(index="split", columns="checkpoint_label", values="map50").plot(kind="bar", ax=axes[0])
-                        ok_rows.pivot(index="split", columns="checkpoint_label", values="map50_95").plot(kind="bar", ax=axes[1])
+                        ok_rows.pivot_table(index="split", columns="method", values="map50").plot(kind="bar", ax=axes[0])
+                        ok_rows.pivot_table(index="split", columns="method", values="map50_95").plot(kind="bar", ax=axes[1])
                     axes[0].set_title("paper eval mAP@0.5")
                     axes[1].set_title("paper eval mAP@0.5:0.95")
                     for ax in axes:
@@ -812,12 +992,12 @@ def evaluation_notebook() -> list[dict]:
                     plt.tight_layout()
                     plt.show()
             else:
-                print("No paper-protocol summary CSV yet:", paper_summary_path)
+                print("No ET/LocalEMA paper-protocol summary CSVs yet.")
             """
         ),
         md(
             """
-            ## 9. Optional Comparison with DQA and FedSTO
+            ## 10. Optional Comparison with LocalEMA, DQA, and FedSTO
             """
         ),
         code(
@@ -825,6 +1005,7 @@ def evaluation_notebook() -> list[dict]:
             frames = []
             for method, path in [
                 ("EfficientTeacher-1C", paper_summary_path),
+                ("LocalEMA-1C", LOCALEMA_WORK_ROOT / "validation_reports" / "paper_protocol_eval_summary.csv"),
                 ("DQA-CWA", DQA_PAPER_EVAL),
                 ("FedSTO", FEDSTO_PAPER_EVAL),
             ]:
@@ -858,29 +1039,36 @@ def evaluation_notebook() -> list[dict]:
         ),
         md(
             """
-            ## 10. Validation Plot Artifacts
+            ## 11. Validation Plot Artifacts
             """
         ),
         code(
             """
             plot_rows = []
-            val_runs = VALIDATION_ROOT / "paper_protocol_val_runs"
-            for run_dir in sorted(val_runs.glob("*")):
-                if not run_dir.is_dir():
-                    continue
-                plot_rows.append(
-                    {
-                        "run": run_dir.name,
-                        "PR_curve": (run_dir / "PR_curve.png").exists(),
-                        "F1_curve": (run_dir / "F1_curve.png").exists(),
-                        "P_curve": (run_dir / "P_curve.png").exists(),
-                        "R_curve": (run_dir / "R_curve.png").exists(),
-                        "confusion_matrix": (run_dir / "confusion_matrix.png").exists(),
-                    }
-                )
+            for method, workspace in METHOD_WORKSPACES.items():
+                val_runs = workspace / "validation_reports" / "paper_protocol_val_runs"
+                for run_dir in sorted(val_runs.glob("*")):
+                    if not run_dir.is_dir():
+                        continue
+                    plot_rows.append(
+                        {
+                            "method": method,
+                            "run": run_dir.name,
+                            "PR_curve": (run_dir / "PR_curve.png").exists(),
+                            "F1_curve": (run_dir / "F1_curve.png").exists(),
+                            "P_curve": (run_dir / "P_curve.png").exists(),
+                            "R_curve": (run_dir / "R_curve.png").exists(),
+                            "confusion_matrix": (run_dir / "confusion_matrix.png").exists(),
+                        }
+                    )
             display(pd.DataFrame(plot_rows) if plot_rows else pd.DataFrame())
 
-            first_pr = next(val_runs.glob("*/PR_curve.png"), None) if val_runs.exists() else None
+            first_pr = None
+            for workspace in METHOD_WORKSPACES.values():
+                val_runs = workspace / "validation_reports" / "paper_protocol_val_runs"
+                first_pr = next(val_runs.glob("*/PR_curve.png"), None) if val_runs.exists() else None
+                if first_pr is not None:
+                    break
             if first_pr is not None:
                 display(NotebookImage(filename=str(first_pr)))
             """
@@ -889,6 +1077,7 @@ def evaluation_notebook() -> list[dict]:
 
 
 def main() -> None:
+    write_notebook(ROOT / "00_localema_training.ipynb", localema_training_notebook())
     write_notebook(ROOT / "01_efficient_teacher_training.ipynb", training_notebook())
     write_notebook(ROOT / "01_2_efficient_teacher_evaluation.ipynb", evaluation_notebook())
     print("Wrote EfficientTeacher notebooks.")

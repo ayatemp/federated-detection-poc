@@ -32,7 +32,8 @@ RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DEFAULT_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_single_client"
-PROTOCOL_VERSION = "efficientteacher_single_client_dqa_matched_v1"
+PROTOCOL_VERSION_ET = "efficientteacher_single_client_dqa_matched_no_localema_v2"
+PROTOCOL_VERSION_LOCALEMA = "efficientteacher_single_client_localema_dqa_matched_v1"
 
 
 def normalize_paths(args: argparse.Namespace) -> argparse.Namespace:
@@ -43,6 +44,8 @@ def normalize_paths(args: argparse.Namespace) -> argparse.Namespace:
         args.pseudo_stats_root = Path(args.pseudo_stats_root).expanduser().resolve()
     if args.log_file is not None:
         args.log_file = Path(args.log_file).expanduser().resolve()
+    if args.protocol_version is None:
+        args.protocol_version = PROTOCOL_VERSION_LOCALEMA if args.local_ema else PROTOCOL_VERSION_ET
     return args
 
 
@@ -257,6 +260,8 @@ def append_round_summary(workspace: Path, payload: dict) -> None:
 def run_protocol(args: argparse.Namespace) -> None:
     setup, fedsto, client = configure_modules(args)
     setup.build_base_configs()
+    mode = "LocalEMA" if args.local_ema else "EfficientTeacher"
+    print(f"Running {mode} single-client protocol with client_{client['id']}_{client['weather']}.")
     pretrained = fedsto.PRETRAINED_PATH if args.dry_run else fedsto.download_pretrained()
     if not args.dry_run:
         fedsto.check_runtime_dependencies()
@@ -273,6 +278,22 @@ def run_protocol(args: argparse.Namespace) -> None:
     ensure_disk_space(args.workspace_root, args.min_free_gib)
 
     current_global = fedsto.GLOBAL_DIR / "round000_warmup.pt"
+    if args.warmup_checkpoint is not None:
+        source_warmup = Path(args.warmup_checkpoint).expanduser().resolve()
+        ok, reason = fedsto.validate_checkpoint(source_warmup)
+        if not ok:
+            raise RuntimeError(f"Warm-up checkpoint is invalid: {source_warmup} ({reason})")
+        if args.dry_run:
+            print(f"Dry run: would seed warm-up from {source_warmup}")
+        else:
+            print(f"Seeding warm-up from external checkpoint: {source_warmup}")
+            fedsto.make_start_checkpoint(
+                source_warmup,
+                current_global,
+                protocol=args.protocol_version,
+                stage="et_single_client_external_warmup_seed",
+            )
+
     if not args.dry_run and current_global.exists() and not args.force_warmup:
         ok, reason = fedsto.validate_checkpoint(current_global)
         if ok:
@@ -404,7 +425,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                     fedsto.make_start_checkpoint(
                         current_global,
                         client_start,
-                        latest_client,
+                        latest_client if args.local_ema else None,
                         protocol=args.protocol_version,
                         stage=f"et_phase{phase}_round{round_idx:03d}_client{client['id']}_start",
                     )
@@ -441,7 +462,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                 client_ckpt,
                 latest_client,
                 protocol=args.protocol_version,
-                stage=f"et_client_{client['id']}_latest",
+                stage=f"et_client_{client['id']}_latest_local_ema_source",
             )
 
             aggregate_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_client_aggregate.pt"
@@ -525,6 +546,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                     "global": str(current_global.resolve()),
                     "pseudo_stats": str(stats_path.resolve()),
                     "protocol": args.protocol_version,
+                    "local_ema": bool(args.local_ema),
                 },
             )
             completed.add((phase, round_idx))
@@ -558,7 +580,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--append-train-log", action="store_true")
     parser.add_argument("--stream-train-output", action="store_true")
     parser.add_argument("--require-pseudo-stats", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--protocol-version", default=PROTOCOL_VERSION)
+    parser.add_argument(
+        "--warmup-checkpoint",
+        type=Path,
+        default=None,
+        help="Seed round000_warmup.pt from an existing checkpoint instead of training warm-up from the raw pretrained weights.",
+    )
+    parser.add_argument(
+        "--local-ema",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Carry each client's previous EMA teacher into the next round. Disabled by default for plain ET.",
+    )
+    parser.add_argument("--protocol-version", default=None)
     return parser.parse_args()
 
 
