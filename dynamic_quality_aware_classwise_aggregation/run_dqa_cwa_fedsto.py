@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 
 from dqa_cwa_aggregation import (
@@ -214,22 +215,44 @@ def run_train(
             raise RuntimeError(f"Training failed for {config}") from exc
     else:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        recent_output = deque(maxlen=120)
         with args.log_file.open("a", encoding="utf-8") as log:
             log.write("\n" + "=" * 100 + "\n")
             log.write(" ".join(cmd) + "\n")
+            log.flush()
             try:
-                subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=fedsto.setup.ET_ROOT,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                assert process.stdout is not None
+                for line in process.stdout:
+                    log.write(line)
+                    recent_output.append(line.rstrip("\n"))
+                return_code = process.wait()
+                if return_code != 0:
+                    raise subprocess.CalledProcessError(return_code, cmd)
             except subprocess.CalledProcessError as exc:
                 print(f"Training subprocess failed with exit code {exc.returncode}: {' '.join(cmd)}")
-                print(f"Last 120 lines from {args.log_file}:")
-                try:
-                    from collections import deque
-
-                    with args.log_file.open(encoding="utf-8", errors="replace") as failed_log:
-                        for line in deque(failed_log, maxlen=120):
-                            print(line.rstrip())
-                except OSError as log_exc:
-                    print(f"Could not read failed training log: {log_exc}")
+                log.flush()
+                if args.log_file.exists():
+                    print(f"Last 120 lines from {args.log_file}:")
+                    try:
+                        with args.log_file.open(encoding="utf-8", errors="replace") as failed_log:
+                            for line in deque(failed_log, maxlen=120):
+                                print(line.rstrip())
+                    except OSError as log_exc:
+                        print(f"Could not read failed training log: {log_exc}")
+                else:
+                    print(f"Training log path disappeared before it could be reread: {args.log_file}")
+                    print("Last 120 captured training-output lines:")
+                    for line in recent_output:
+                        print(line.rstrip())
                 raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
 
         print(f"Training output appended to {args.log_file}")

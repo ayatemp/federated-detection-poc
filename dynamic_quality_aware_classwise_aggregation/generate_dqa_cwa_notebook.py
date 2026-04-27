@@ -237,7 +237,13 @@ def background_run_markdown() -> dict:
     )
 
 
-def background_run_code(run_default: bool) -> dict:
+def background_run_code(run_default: bool, pass_train_log_file: bool = False) -> dict:
+    train_log_args = (
+        '        "--log-file",\n'
+        "        str(TRAIN_LOG),\n"
+        if pass_train_log_file
+        else ""
+    )
     text = """
     RUN_DQA = __RUN_DEFAULT__
     ALLOW_CPU_TRAINING = False
@@ -303,6 +309,7 @@ def background_run_code(run_default: bool) -> dict:
         str(MASTER_PORT),
         "--min-free-gib",
         str(MIN_FREE_GIB),
+__TRAIN_LOG_ARGS__
     ]
     if APPEND_TRAIN_LOG:
         cmd.append("--append-train-log")
@@ -325,6 +332,7 @@ def background_run_code(run_default: bool) -> dict:
         if PID_PATH.exists():
             PID_PATH.unlink()
         RUNNER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        TRAIN_LOG.parent.mkdir(parents=True, exist_ok=True)
         launch = "cd {cwd} && setsid env PYTHONUNBUFFERED=1 {cmd} > {log} 2>&1 < /dev/null & echo $!".format(
             cwd=shlex.quote(str(REPO_ROOT)),
             cmd=" ".join(shlex.quote(part) for part in cmd),
@@ -339,7 +347,11 @@ def background_run_code(run_default: bool) -> dict:
     print("runner log:", RUNNER_LOG)
     print("train log:", TRAIN_LOG)
     """
-    return code(text.replace("__RUN_DEFAULT__", str(run_default)))
+    return code(
+        text.replace("__RUN_DEFAULT__", str(run_default)).replace(
+            "__TRAIN_LOG_ARGS__\n", train_log_args
+        )
+    )
 
 
 def blocking_run_markdown() -> dict:
@@ -352,7 +364,13 @@ def blocking_run_markdown() -> dict:
     )
 
 
-def blocking_run_code(run_default: bool) -> dict:
+def blocking_run_code(run_default: bool, pass_train_log_file: bool = False) -> dict:
+    train_log_args = (
+        '        "--log-file",\n'
+        "        str(TRAIN_LOG),\n"
+        if pass_train_log_file
+        else ""
+    )
     text = """
     import os
     import re
@@ -422,6 +440,7 @@ def blocking_run_code(run_default: bool) -> dict:
         str(MASTER_PORT),
         "--min-free-gib",
         str(MIN_FREE_GIB),
+__TRAIN_LOG_ARGS__
     ]
     if APPEND_TRAIN_LOG:
         cmd.append("--append-train-log")
@@ -489,6 +508,7 @@ def blocking_run_code(run_default: bool) -> dict:
             )
 
         RUNNER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        TRAIN_LOG.parent.mkdir(parents=True, exist_ok=True)
         print("Running:", " ".join(cmd))
         print("Runner log:", RUNNER_LOG)
         print("Train log:", TRAIN_LOG)
@@ -554,7 +574,11 @@ def blocking_run_code(run_default: bool) -> dict:
     else:
         print("Set RUN_FULL_REPRODUCTION = True and rerun this cell.")
     """
-    return code(text.replace("__RUN_DEFAULT__", str(run_default)))
+    return code(
+        text.replace("__RUN_DEFAULT__", str(run_default)).replace(
+            "__TRAIN_LOG_ARGS__\n", train_log_args
+        )
+    )
 
 
 def eval_code(eval_default: bool) -> dict:
@@ -612,6 +636,9 @@ def build_notebook(
     stats_dir_name: str,
     runner_log_name: str,
     pid_file_name: str,
+    train_log_name: str = "dqa_cwa_latest.log",
+    train_log_root: str = "WORK_ROOT",
+    pass_train_log_file: bool = False,
     runner_script_name: str = "run_dqa_cwa_fedsto.py",
     warmup_epochs: int,
     phase1_rounds: int,
@@ -687,7 +714,7 @@ def build_notebook(
             STATS_ROOT = DQA_ROOT / "{stats_dir_name}"
             RUNNER_LOG = DQA_ROOT / "{runner_log_name}"
             PID_PATH = DQA_ROOT / "{pid_file_name}"
-            TRAIN_LOG = WORK_ROOT / "dqa_cwa_latest.log"
+            TRAIN_LOG = {train_log_root} / "{train_log_name}"
             FEDSTO_WORK_ROOT = NAV_ROOT / "efficientteacher_fedsto"
 
             preferred_python = Path("/root/micromamba/envs/al_yolov8/bin/python")
@@ -896,9 +923,9 @@ def build_notebook(
     )
 
     if run_mode == "blocking":
-        cells.extend([blocking_run_markdown(), blocking_run_code(run_default)])
+        cells.extend([blocking_run_markdown(), blocking_run_code(run_default, pass_train_log_file)])
     else:
-        cells.extend([background_run_markdown(), background_run_code(run_default)])
+        cells.extend([background_run_markdown(), background_run_code(run_default, pass_train_log_file)])
 
     cells.extend(
         [
@@ -2958,6 +2985,9 @@ def main() -> None:
         stats_dir_name="stats_dqa_ver2",
         runner_log_name="dqa_ver2_runner.out",
         pid_file_name="dqa_ver2_runner.pid",
+        train_log_name="dqa_ver2_train.log",
+        train_log_root="DQA_ROOT",
+        pass_train_log_file=True,
         runner_script_name="run_dqa_cwa_fedsto_v2.py",
         warmup_epochs=15,
         phase1_rounds=14,
