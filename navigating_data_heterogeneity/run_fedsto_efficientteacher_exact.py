@@ -22,6 +22,23 @@ HISTORY_PATH = setup.WORK_ROOT / "history.json"
 PROTOCOL_VERSION = "fedsto_alg1_server_after_client_aggregation_v1"
 
 
+def apply_workspace_root(workspace_root: Path) -> Path:
+    """Redirect generated configs, checkpoints, and manifests into a dedicated workspace."""
+    global PRETRAINED_PATH, GLOBAL_DIR, CLIENT_STATE_DIR, HISTORY_PATH
+
+    workspace_root = Path(workspace_root).resolve()
+    setup.WORK_ROOT = workspace_root
+    setup.LIST_ROOT = workspace_root / "data_lists"
+    setup.CONFIG_ROOT = workspace_root / "configs"
+    setup.RUN_ROOT = workspace_root / "runs"
+
+    PRETRAINED_PATH = workspace_root / "weights" / "efficient-yolov5l.pt"
+    GLOBAL_DIR = workspace_root / "global_checkpoints"
+    CLIENT_STATE_DIR = workspace_root / "client_states"
+    HISTORY_PATH = workspace_root / "history.json"
+    return workspace_root
+
+
 def ensure_efficientteacher_import_path() -> None:
     et_root = str(setup.ET_ROOT.resolve())
     if et_root not in sys.path:
@@ -408,6 +425,7 @@ def aggregate_checkpoints(paths: list[Path], base_path: Path, out: Path, *, back
 
 
 def run_protocol(args: argparse.Namespace) -> None:
+    apply_workspace_root(args.workspace_root)
     setup.build_base_configs()
     pretrained = PRETRAINED_PATH if args.dry_run else download_pretrained()
     if not args.dry_run:
@@ -632,6 +650,12 @@ def run_protocol(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=setup.WORK_ROOT,
+        help="Directory that stores manifests, configs, checkpoints, and logs for this FedSTO run.",
+    )
     parser.add_argument("--setup-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--warmup-epochs", type=int, default=50)
@@ -656,6 +680,7 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     parsed = parse_args()
+    apply_workspace_root(parsed.workspace_root)
     if parsed.setup_only:
         setup.build_base_configs()
     else:

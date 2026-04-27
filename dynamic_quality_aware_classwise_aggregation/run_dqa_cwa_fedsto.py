@@ -220,6 +220,16 @@ def run_train(
             try:
                 subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
             except subprocess.CalledProcessError as exc:
+                print(f"Training subprocess failed with exit code {exc.returncode}: {' '.join(cmd)}")
+                print(f"Last 120 lines from {args.log_file}:")
+                try:
+                    from collections import deque
+
+                    with args.log_file.open(encoding="utf-8", errors="replace") as failed_log:
+                        for line in deque(failed_log, maxlen=120):
+                            print(line.rstrip())
+                except OSError as log_exc:
+                    print(f"Could not read failed training log: {log_exc}")
                 raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
 
         print(f"Training output appended to {args.log_file}")

@@ -5,6 +5,13 @@ __pycache__/
 .ipynb_checkpoints/
 *.pyc
 *.pyo
+*.yaml
+*.txt
+*.json
+*.csv
+
+research/
+
 
 *.png
 *.jpg

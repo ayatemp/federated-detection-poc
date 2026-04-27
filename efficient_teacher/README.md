@@ -14,8 +14,10 @@ The protocol is intentionally narrow:
 - ET and LocalEMA notebooks can seed warm-up from the completed DQA warm-up checkpoint
 - plain ET defaults to no cross-round local EMA carryover
 - LocalEMA is available as a separate comparison run
-- the same phase schedule used by the current guarded DQA notebook:
-  `warmup=15`, `phase1=14`, `phase2=27`, `batch=64`, `gpus=2`
+- notebook defaults target a one-hour pilot on 2 GPUs:
+  `warmup checkpoint reuse`, `phase1=4`, `phase2=7`, `batch=64`, `gpus=2`
+- the original DQA-matched full schedule is still available by switching the notebook preset back to:
+  `warmup=15`, `phase1=14`, `phase2=27`
 
 The runner still uses the FedSTO checkpoint helpers for phase-1 backbone-only
 aggregation. Because there is only one client, phase-2 aggregation is equivalent
@@ -25,6 +27,7 @@ to taking that client checkpoint before the server GT update.
 
 ```text
 efficient_teacher/01_efficient_teacher_training.ipynb
+efficient_teacher/01_1_2_efficient_teacher_current_run_review.ipynb
 efficient_teacher/00_localema_training.ipynb
 efficient_teacher/01_2_efficient_teacher_evaluation.ipynb
 ```
@@ -48,6 +51,10 @@ Launch or resume the default DQA-matched run:
 ```bash
 python3 efficient_teacher/run_efficient_teacher_single_client.py
 ```
+
+The runner skips EfficientTeacher's redundant post-train `best.pt` validation
+by default, which avoids the Ada multi-GPU fuse crash seen during the first ET
+round in this workspace.
 
 Launch or resume the LocalEMA comparison:
 

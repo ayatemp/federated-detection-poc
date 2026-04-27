@@ -1,9 +1,9 @@
 {
   "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
   "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
-  "official_ssfod_sha": "9e114950a7732b2367d7929fbf5409daa3d585b9",
+  "official_ssfod_sha": "c9ecc5ab3f7c8ba9fce08aa8afd49407739c22c5",
   "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
-  "efficientteacher_sha": "64165e24a30cd6dc1dd893cc861c1feab0a536ee",
+  "efficientteacher_sha": "c9ecc5ab3f7c8ba9fce08aa8afd49407739c22c5",
   "server": {
     "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
     "train_list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/server_cloudy_train.txt",
@@ -31,6 +31,97 @@
       "images": 5000
     }
   ],
+  "paper_evaluation": {
+    "splits": [
+      {
+        "name": "cloudy",
+        "raw_weather": "partly cloudy",
+        "list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/paper_eval_cloudy_val.txt",
+        "images": 738,
+        "boxes": 14937,
+        "class_counts": {
+          "car": 8622,
+          "person": 1052,
+          "traffic light": 1619,
+          "traffic sign": 2845,
+          "truck": 467,
+          "bus": 151,
+          "motor": 65,
+          "bike": 70,
+          "rider": 44,
+          "train": 2
+        }
+      },
+      {
+        "name": "overcast",
+        "raw_weather": "overcast",
+        "list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/paper_eval_overcast_val.txt",
+        "images": 1239,
+        "boxes": 25686,
+        "class_counts": {
+          "traffic sign": 4809,
+          "traffic light": 3179,
+          "car": 14504,
+          "rider": 106,
+          "motor": 71,
+          "truck": 657,
+          "person": 1935,
+          "bus": 278,
+          "bike": 145,
+          "train": 2
+        }
+      },
+      {
+        "name": "rainy",
+        "raw_weather": "rainy",
+        "list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/paper_eval_rainy_val.txt",
+        "images": 738,
+        "boxes": 13160,
+        "class_counts": {
+          "car": 6937,
+          "traffic sign": 2529,
+          "truck": 358,
+          "bus": 129,
+          "traffic light": 2237,
+          "person": 835,
+          "rider": 44,
+          "bike": 59,
+          "motor": 31,
+          "train": 1
+        }
+      },
+      {
+        "name": "snowy",
+        "raw_weather": "snowy",
+        "list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/paper_eval_snowy_val.txt",
+        "images": 769,
+        "boxes": 14321,
+        "class_counts": {
+          "car": 7536,
+          "truck": 351,
+          "traffic sign": 2697,
+          "traffic light": 2304,
+          "person": 1157,
+          "bike": 89,
+          "rider": 38,
+          "bus": 135,
+          "train": 5,
+          "motor": 9
+        }
+      }
+    ],
+    "total": {
+      "name": "total",
+      "list": "/app/Object_Detection/navigating_data_heterogeneity/efficientteacher_fedsto/data_lists/paper_eval_total_val.txt",
+      "images": 3484,
+      "source_splits": [
+        "cloudy",
+        "overcast",
+        "rainy",
+        "snowy"
+      ]
+    }
+  },
   "classes": [
     "person",
     "rider",
