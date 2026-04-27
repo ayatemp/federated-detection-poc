@@ -32,8 +32,12 @@ RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DEFAULT_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_single_client"
-PROTOCOL_VERSION_ET = "efficientteacher_single_client_dqa_matched_no_localema_v2"
-PROTOCOL_VERSION_LOCALEMA = "efficientteacher_single_client_localema_dqa_matched_v1"
+PROTOCOL_VERSION_ET = "efficientteacher_single_client_dqa_matched_phase2_orthogonal_v3"
+PROTOCOL_VERSION_LOCALEMA = "efficientteacher_single_client_localema_phase2_orthogonal_v2"
+LEGACY_PHASE1_PROTOCOLS = {
+    PROTOCOL_VERSION_ET: {"efficientteacher_single_client_dqa_matched_no_localema_v2"},
+    PROTOCOL_VERSION_LOCALEMA: {"efficientteacher_single_client_localema_dqa_matched_v1"},
+}
 
 
 def normalize_paths(args: argparse.Namespace) -> argparse.Namespace:
@@ -103,6 +107,90 @@ def checkpoint_run_name(config: Path) -> str:
         with config.open(encoding="utf-8") as f:
             return str(yaml.safe_load(f)["name"])
     return cfg_name
+
+
+def protocol_compatible(actual: str | None, expected: str | None, phase: int) -> bool:
+    if expected is None:
+        return True
+    if actual == expected:
+        return True
+    return phase == 1 and actual in LEGACY_PHASE1_PROTOCOLS.get(expected, set())
+
+
+def completed_et_history_prefix(
+    fedsto,
+    history: list[dict],
+    *,
+    phase1_rounds: int,
+    phase2_rounds: int,
+    warmup_checkpoint: Path,
+    expected_protocol: str | None,
+) -> tuple[list[dict], Path, tuple[int, int] | None]:
+    """Return completed ET rounds, preserving old phase-1 checkpoints after phase-2 fixes."""
+    by_round: dict[tuple[int, int], dict] = {}
+    for entry in history:
+        try:
+            key = (int(entry["phase"]), int(entry["round"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        by_round.setdefault(key, entry)
+
+    normalized: list[dict] = []
+    current_global = warmup_checkpoint
+    for phase, rounds in [(1, phase1_rounds), (2, phase2_rounds)]:
+        for round_idx in range(1, rounds + 1):
+            entry = by_round.get((phase, round_idx))
+            if entry and not protocol_compatible(entry.get("protocol"), expected_protocol, phase):
+                return normalized, current_global, (phase, round_idx)
+
+            global_path = Path(entry.get("global", "")) if entry else None
+            if global_path is not None and fedsto.checkpoint_present(global_path):
+                current_global = global_path
+                normalized.append(
+                    {
+                        "phase": phase,
+                        "round": round_idx,
+                        "global": str(global_path.resolve()),
+                        "protocol": entry.get("protocol") if entry else expected_protocol,
+                    }
+                )
+                continue
+
+            return normalized, current_global, (phase, round_idx)
+    return normalized, current_global, None
+
+
+def write_et_runtime_config(
+    fedsto,
+    *,
+    name: str,
+    target: Path | None,
+    weights: Path,
+    phase: int,
+    role: str,
+    round_idx: int,
+    batch_size: int,
+    workers: int,
+    device: str,
+) -> Path:
+    train_scope = "backbone" if phase == 1 else "all"
+    orthogonal_weight = 0.0 if phase == 1 else 1e-4
+    cfg = fedsto.setup.efficientteacher_config(
+        name=name,
+        train=fedsto.setup.LIST_ROOT / "server_cloudy_train.txt",
+        val=fedsto.setup.LIST_ROOT / "server_cloudy_val.txt",
+        target=target,
+        weights=str(weights.resolve()),
+        epochs=1,
+        train_scope=train_scope,
+        orthogonal_weight=orthogonal_weight,
+        batch_size=batch_size,
+        workers=workers,
+        device=device,
+    )
+    if role == "server":
+        cfg["SSOD"] = {"train_domain": False}
+    return fedsto.setup.write_config(f"runtime_phase{phase}_{role}_round{round_idx}_{name}.yaml", cfg)
 
 
 def ensure_disk_space(
@@ -220,6 +308,10 @@ def run_train(
     env = os.environ.copy()
     env.setdefault("PYTHONHASHSEED", "0")
     env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    if args.skip_final_best_val:
+        env["ET_SKIP_AFTER_TRAIN_BEST_VAL"] = "1"
+    else:
+        env.pop("ET_SKIP_AFTER_TRAIN_BEST_VAL", None)
     if extra_env:
         env.update(extra_env)
 
@@ -337,7 +429,8 @@ def run_protocol(args: argparse.Namespace) -> None:
         print("Ignoring existing history because --force-restart was set.")
     else:
         loaded_history = fedsto.load_history()
-        history, current_global, next_round = fedsto.completed_history_prefix(
+        history, current_global, next_round = completed_et_history_prefix(
+            fedsto,
             loaded_history,
             phase1_rounds=args.phase1_rounds,
             phase2_rounds=args.phase2_rounds,
@@ -429,8 +522,9 @@ def run_protocol(args: argparse.Namespace) -> None:
                         protocol=args.protocol_version,
                         stage=f"et_phase{phase}_round{round_idx:03d}_client{client['id']}_start",
                     )
-                client_cfg = fedsto.write_runtime_config(
-                    client_name,
+                client_cfg = write_et_runtime_config(
+                    fedsto,
+                    name=client_name,
                     target=target,
                     weights=client_start,
                     phase=phase,
@@ -490,8 +584,9 @@ def run_protocol(args: argparse.Namespace) -> None:
                         protocol=args.protocol_version,
                         stage=f"et_phase{phase}_round{round_idx:03d}_server_start",
                     )
-                server_cfg = fedsto.write_runtime_config(
-                    server_name,
+                server_cfg = write_et_runtime_config(
+                    fedsto,
+                    name=server_name,
                     target=None,
                     weights=server_start,
                     phase=phase,
@@ -580,6 +675,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--append-train-log", action="store_true")
     parser.add_argument("--stream-train-output", action="store_true")
     parser.add_argument("--require-pseudo-stats", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--skip-final-best-val",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip EfficientTeacher's redundant post-train best.pt validation pass, which can fail on Ada multi-GPU runs.",
+    )
     parser.add_argument(
         "--warmup-checkpoint",
         type=Path,
