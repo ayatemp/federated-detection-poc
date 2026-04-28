@@ -851,6 +851,7 @@ def build_notebook(
                         {
                             "id": client["id"],
                             "weather": client["weather"],
+                            "scene": client.get("scene", client.get("weather")),
                             "images": client["images"],
                         }
                         for client in manifest["clients"]
@@ -2979,6 +2980,32 @@ def main() -> None:
         setting_tables_markdown=CORRECTED_12H_SETTING_TABLES,
     )
     build_notebook(
+        notebook_title="03_3 DQA-CWA Scene-Client 12h Reproduction",
+        notebook_path=ROOT / "03_3_dqa_cwa_scene_12h_reproduction.ipynb",
+        workspace_name="efficientteacher_dqa_cwa_scene_12h",
+        stats_dir_name="stats_scene_12h",
+        runner_log_name="dqa_cwa_scene_12h_runner.out",
+        pid_file_name="dqa_cwa_scene_12h_runner.pid",
+        train_log_name="dqa_cwa_scene_12h_train.log",
+        train_log_root="DQA_ROOT",
+        pass_train_log_file=True,
+        runner_script_name="run_dqa_cwa_fedsto_scene.py",
+        warmup_epochs=20,
+        phase1_rounds=20,
+        phase2_rounds=35,
+        batch_size=64,
+        workers=0,
+        gpus=2,
+        master_port=29514,
+        min_free_gib=70,
+        mode_heading="Scene-Client 12 Hour Configuration",
+        mode_description="This run keeps the corrected DQA implementation from 03, but changes the unlabeled clients from weather splits to BDD100K scene splits: highway, city street, and residential. The labeled server source remains cloudy, while the training-time validation list points at the union of the three scene validation splits so the run is easier to judge for the target environments. This notebook requires non-empty BDD100K det_v2 train/val JSON annotations because scene labels live only in the raw annotations.",
+        estimate_note="Using the completed 04 timing as a guide, 20 warm-up epochs, 20 phase-1 rounds, and 35 phase-2 rounds should land around 12 hours on the same 2x RTX 6000 Ada node. The exact time can move with scene-list size and DQA stats overhead.",
+        run_mode="blocking",
+        run_default=True,
+        eval_default=False,
+    )
+    build_notebook(
         notebook_title="04 DQA-CWA v2 Server-Anchored Reproduction",
         notebook_path=ROOT / "04_dqa_ver2_reproduction.ipynb",
         workspace_name="efficientteacher_dqa_ver2",
@@ -3011,6 +3038,32 @@ def main() -> None:
         stats_dir_name="stats_dqa_ver2",
         notebook_description="This notebook is a read-only analysis pass for the DQA-CWA v2 run. It follows the same evaluation layout as 03_2, but points at the v2 workspace and labels the method as DQA-CWA v2 in comparisons.",
         method_label="DQA-CWA v2",
+    )
+    build_notebook(
+        notebook_title="04_3 DQA-CWA v2 Scene-Client 12h Reproduction",
+        notebook_path=ROOT / "04_3_dqa_ver2_scene_12h_reproduction.ipynb",
+        workspace_name="efficientteacher_dqa_ver2_scene_12h",
+        stats_dir_name="stats_dqa_ver2_scene_12h",
+        runner_log_name="dqa_ver2_scene_12h_runner.out",
+        pid_file_name="dqa_ver2_scene_12h_runner.pid",
+        train_log_name="dqa_ver2_scene_12h_train.log",
+        train_log_root="DQA_ROOT",
+        pass_train_log_file=True,
+        runner_script_name="run_dqa_cwa_fedsto_scene_v2.py",
+        warmup_epochs=20,
+        phase1_rounds=20,
+        phase2_rounds=35,
+        batch_size=64,
+        workers=0,
+        gpus=2,
+        master_port=29515,
+        min_free_gib=70,
+        mode_heading="DQA v2 Scene-Client 12 Hour Configuration",
+        mode_description="This run keeps the DQA v2 aggregation implementation from 04, but changes the unlabeled clients from weather splits to BDD100K scene splits: highway, city street, and residential. The labeled server source remains cloudy, while the training-time validation list points at the union of the three scene validation splits so the run is easier to judge for the target environments. This notebook requires non-empty BDD100K det_v2 train/val JSON annotations because scene labels live only in the raw annotations.",
+        estimate_note="Using the completed 04 timing as a guide, 20 warm-up epochs, 20 phase-1 rounds, and 35 phase-2 rounds should land around 12 hours on the same 2x RTX 6000 Ada node. The exact time can move with scene-list size and DQA stats overhead.",
+        run_mode="blocking",
+        run_default=True,
+        eval_default=False,
     )
     build_paper_eval_notebook(
         notebook_title="02_4 DQA-CWA Paper Protocol Evaluation",
