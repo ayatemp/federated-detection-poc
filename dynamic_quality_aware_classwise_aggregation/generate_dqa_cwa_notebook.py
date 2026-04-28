@@ -3065,6 +3065,14 @@ def main() -> None:
         run_default=True,
         eval_default=False,
     )
+    build_evaluation_notebook(
+        notebook_title="04_3_2 DQA-CWA v2 Scene-Client 12h Evaluation",
+        notebook_path=ROOT / "04_3_2_dqa_ver2_scene_12h_evaluation.ipynb",
+        workspace_name="efficientteacher_dqa_ver2_scene_12h",
+        stats_dir_name="stats_dqa_ver2_scene_12h",
+        notebook_description="This notebook is a read-only analysis pass for the completed 04_3 DQA-CWA v2 scene-client run. It follows the same evaluation layout as 04_2, but points at the scene-client workspace and labels the method as DQA-CWA v2 scene.",
+        method_label="DQA-CWA v2 scene",
+    )
     build_paper_eval_notebook(
         notebook_title="02_4 DQA-CWA Paper Protocol Evaluation",
         notebook_path=ROOT / "02_4_dqa_cwa_paper_protocol_evaluation.ipynb",
