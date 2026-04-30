@@ -36,6 +36,12 @@ except ImportError:
 
 LOGGER = logging.getLogger(__name__)
 
+def _float_env(name, default):
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return float(raw)
+
 @torch.no_grad()
 def concat_all_gather(tensor, dim=0):
     """Performs all_gather operation on the provided tensors.
@@ -53,12 +59,40 @@ def concat_all_gather(tensor, dim=0):
 
 class FairPseudoLabel:
     def __init__(self, cfg):
-        self.nms_conf_thres = cfg.SSOD.nms_conf_thres
+        self.nms_conf_thres = _float_env("DQA06_NMS_CONF_THRES", cfg.SSOD.nms_conf_thres)
         self.nms_iou_thres = cfg.SSOD.nms_iou_thres
         self.debug = cfg.SSOD.debug
         self.multi_label = cfg.SSOD.multi_label
         self.names = cfg.Dataset.names
         self.num_points = cfg.Dataset.np
+        self.max_pseudo_per_image = int(os.getenv("ET_MAX_PSEUDO_PER_IMAGE", "0") or 0)
+        self.max_pseudo_per_class_image = int(os.getenv("ET_MAX_PSEUDO_PER_CLASS_IMAGE", "0") or 0)
+
+    def limit_pseudo_output(self, outputs):
+        if self.max_pseudo_per_image <= 0 and self.max_pseudo_per_class_image <= 0:
+            return outputs
+
+        limited = []
+        for detections in outputs:
+            if detections is None or detections.shape[0] == 0:
+                limited.append(detections)
+                continue
+
+            keep_parts = []
+            if self.max_pseudo_per_class_image > 0:
+                class_ids = detections[:, 5].to(torch.long)
+                for class_id in torch.unique(class_ids):
+                    class_rows = detections[class_ids == class_id]
+                    order = class_rows[:, 4].argsort(descending=True)
+                    keep_parts.append(class_rows[order[: self.max_pseudo_per_class_image]])
+                detections = torch.cat(keep_parts, dim=0) if keep_parts else detections[:0]
+
+            if self.max_pseudo_per_image > 0 and detections.shape[0] > self.max_pseudo_per_image:
+                order = detections[:, 4].argsort(descending=True)
+                detections = detections[order[: self.max_pseudo_per_image]]
+
+            limited.append(detections)
+        return limited
 
     def online_label_transform_with_image(self, img, targets, M, s, ud, lr, segments=(), border=(0, 0), perspective=0.0):
         if isinstance(img, torch.Tensor):
@@ -199,6 +233,7 @@ class FairPseudoLabel:
         invalid_target_shape = True
         out = non_max_suppression_ssod(out, conf_thres=self.nms_conf_thres, iou_thres=self.nms_iou_thres, \
                                        num_points=self.num_points, multi_label=self.multi_label, labels=lb)
+        out = self.limit_pseudo_output(out)
         out = [out_tensor.detach() for out_tensor in out]
         target_out_np = output_to_target_ssod(out)
         target_out_targets = torch.tensor(target_out_np)

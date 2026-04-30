@@ -30,12 +30,16 @@ efficient_teacher/01_efficient_teacher_training.ipynb
 efficient_teacher/01_1_2_efficient_teacher_current_run_review.ipynb
 efficient_teacher/00_localema_training.ipynb
 efficient_teacher/01_2_efficient_teacher_evaluation.ipynb
+efficient_teacher/02_et_pseudogt_dqa_probe_2h.ipynb
+efficient_teacher/02_2_pseudogt_visual_compare.ipynb
 ```
 
 Regenerate them after editing notebook templates with:
 
 ```bash
 python3 efficient_teacher/generate_notebooks.py
+python3 efficient_teacher/generate_et_pseudogt_probe_notebook.py
+python3 efficient_teacher/generate_pseudogt_visual_compare_notebook.py
 ```
 
 ## CLI
@@ -75,6 +79,7 @@ Outputs are written under:
 ```text
 efficient_teacher/efficientteacher_single_client/
 efficient_teacher/efficientteacher_localema/
+efficient_teacher/efficientteacher_pseudogt_dqa_probe_2h/
 ```
 
 ## Reproduction Notes

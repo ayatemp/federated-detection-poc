@@ -3,6 +3,8 @@
 Loss functions
 """
 
+import json
+import os
 import torch
 import torch.nn as nn
 
@@ -21,6 +23,20 @@ from assigner import YOLOAnchorAssigner
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
     return 1.0 - 0.5 * eps, 0.5 * eps
+
+
+def _threshold_list(value, nc, env_name):
+    raw = os.getenv(env_name)
+    if raw:
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(value, (list, tuple)):
+        if len(value) != nc:
+            raise ValueError(f"{env_name} must contain {nc} values, got {len(value)}")
+        return [float(item) for item in value]
+    return [float(value)] * nc
 
 # for label match type semi spervised training
 class ComputeStudentMatchLoss():
@@ -53,8 +69,16 @@ class ComputeStudentMatchLoss():
         self.cls_w = cfg.SSOD.cls_loss_weight * cfg.Dataset.nc / 80. * 3. / det.nl
         self.anchor_t = cfg.Loss.anchor_t
         # self.ignore_thres = cfg.SSOD.ignore_thres
-        self.ignore_thres_high = [cfg.SSOD.ignore_thres_high] * cfg.Dataset.nc
-        self.ignore_thres_low = [cfg.SSOD.ignore_thres_low] * cfg.Dataset.nc
+        self.ignore_thres_high = _threshold_list(
+            cfg.SSOD.ignore_thres_high,
+            cfg.Dataset.nc,
+            "DQA06_IGNORE_THRES_HIGH",
+        )
+        self.ignore_thres_low = _threshold_list(
+            cfg.SSOD.ignore_thres_low,
+            cfg.Dataset.nc,
+            "DQA06_IGNORE_THRES_LOW",
+        )
         self.uncertain_aug = cfg.SSOD.uncertain_aug
         self.use_ota = cfg.SSOD.use_ota
         self.ignore_obj = cfg.SSOD.ignore_obj
