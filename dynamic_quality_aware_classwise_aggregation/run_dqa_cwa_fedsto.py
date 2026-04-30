@@ -210,9 +210,31 @@ def run_train(
 
     if args.stream_train_output:
         try:
-            subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, check=True)
+            if args.log_file is None:
+                subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, check=True)
+            else:
+                args.log_file.parent.mkdir(parents=True, exist_ok=True)
+                with args.log_file.open("a", encoding="utf-8", buffering=1) as log:
+                    log.write("\n" + "=" * 100 + "\n")
+                    log.write(" ".join(cmd) + "\n")
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=fedsto.setup.ET_ROOT,
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                    )
+                    assert process.stdout is not None
+                    for line in process.stdout:
+                        print(line, end="")
+                        log.write(line)
+                    return_code = process.wait()
+                    if return_code != 0:
+                        raise subprocess.CalledProcessError(return_code, cmd)
         except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Training failed for {config}") from exc
+            raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
     else:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
         recent_output = deque(maxlen=120)

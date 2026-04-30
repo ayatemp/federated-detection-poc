@@ -52,6 +52,50 @@ def _load_raw_records(split: str) -> list[dict]:
     return prep.load_records(raw_root, split)
 
 
+def _raw_annotations_available() -> bool:
+    try:
+        raw_root = prep.dataset_root()
+        return all(prep.label_json(raw_root, split).stat().st_size > 0 for split in ("train", "val"))
+    except FileNotFoundError:
+        return False
+
+
+def _cached_manifest_if_usable() -> dict | None:
+    manifest_path = WORK_ROOT / "manifest.json"
+    if not manifest_path.exists():
+        return None
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    required_lists = [
+        LIST_ROOT / "server_cloudy_train.txt",
+        LIST_ROOT / "server_cloudy_val.txt",
+        LIST_ROOT / "paper_eval_scene_total_val.txt",
+    ]
+    required_lists.extend(
+        LIST_ROOT / f"client_{client['id']}_{client['weather']}_target.txt"
+        for client in CLIENTS
+    )
+    missing_or_empty = [path for path in required_lists if not path.exists() or path.stat().st_size == 0]
+    if missing_or_empty:
+        return None
+
+    for list_path in required_lists:
+        image_paths = [Path(line.strip()) for line in list_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        missing_images = [path for path in image_paths if not path.exists()]
+        if missing_images:
+            print(
+                f"Cached scene list is stale: {list_path} has {len(missing_images)} missing image paths. "
+                f"Example: {missing_images[0]}"
+            )
+            return None
+
+    print(
+        "Reusing cached scene manifest/data_lists because raw BDD100K det_v2 JSON "
+        "annotations are unavailable or empty."
+    )
+    return manifest
+
+
 def _write_scene_image_list(split_name: str, records: list[dict], image_root: Path) -> dict:
     list_path = LIST_ROOT / f"client_{split_name}_target.txt"
     images = sorted((image_root / record["name"]).resolve() for record in records if (image_root / record["name"]).exists())
@@ -147,6 +191,11 @@ def build_data_lists() -> dict:
     _sync_base_paths()
     if not DATA_ROOT.exists():
         raise FileNotFoundError(f"Missing paper-scale dataset: {DATA_ROOT}")
+
+    if not _raw_annotations_available():
+        cached_manifest = _cached_manifest_if_usable()
+        if cached_manifest is not None:
+            return cached_manifest
 
     train_records = _load_raw_records("train")
     val_records = _load_raw_records("val")

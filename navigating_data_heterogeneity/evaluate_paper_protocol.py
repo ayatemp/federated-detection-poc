@@ -249,6 +249,37 @@ def parse_val_stdout(stdout: str) -> dict:
     return parsed
 
 
+def parse_classwise_stdout(stdout: str, names: list[str] | tuple[str, ...] | None = None) -> list[dict]:
+    rows: list[dict] = []
+    name_to_idx = {name: idx for idx, name in enumerate(names or [])}
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 7 or parts[0] == "all":
+            continue
+        try:
+            images = float(parts[-6])
+            labels = float(parts[-5])
+            precision = float(parts[-4])
+            recall = float(parts[-3])
+            map50 = float(parts[-2])
+            map50_95 = float(parts[-1])
+        except ValueError:
+            continue
+        class_name = " ".join(parts[:-6])
+        row = {
+            "class": class_name,
+            "class_index": name_to_idx.get(class_name, ""),
+            "images": images,
+            "labels": labels,
+            "precision": precision,
+            "recall": recall,
+            "map50": map50,
+            "map50_95": map50_95,
+        }
+        rows.append(row)
+    return rows
+
+
 def write_csv_rows(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -333,7 +364,7 @@ def run_evaluations(
     checkpoints: list[tuple[str, Path]],
     split_specs: list[dict],
     args: argparse.Namespace,
-) -> tuple[Path, list[dict], Path]:
+) -> tuple[Path, list[dict], list[dict], Path]:
     report_root = workspace / "validation_reports"
     report_root.mkdir(parents=True, exist_ok=True)
     log_root = report_root / "paper_protocol_logs"
@@ -342,7 +373,9 @@ def run_evaluations(
     val_python = select_val_python(args.python_executable)
 
     rows: list[dict] = []
+    class_rows: list[dict] = []
     split_cfgs = {split["name"]: write_eval_config(setup, report_root, split, args) for split in split_specs}
+    class_names = list(getattr(setup, "BDD_NAMES", []))
 
     for checkpoint_label, checkpoint_path in checkpoints:
         for split in split_specs:
@@ -408,12 +441,25 @@ def run_evaluations(
             if result.returncode == 0:
                 row.update(parse_val_stdout(result.stdout))
                 row["status"] = "ok"
+                if args.verbose:
+                    for class_row in parse_classwise_stdout(result.stdout, class_names):
+                        class_rows.append(
+                            {
+                                "checkpoint_label": checkpoint_label,
+                                "checkpoint_path": str(checkpoint_path),
+                                "split": split["name"],
+                                "split_list": split["list"],
+                                "status": "ok",
+                                "log_file": str(log_file),
+                                **class_row,
+                            }
+                        )
             else:
                 row["status"] = "failed"
                 row["error"] = result.stderr[-1000:]
             rows.append(row)
 
-    return report_root, rows, val_python
+    return report_root, rows, class_rows, val_python
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -429,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
             "No checkpoints selected. Provide --checkpoint label=path.pt or run a FedSTO/DQA experiment first."
         )
 
-    report_root, rows, val_python = run_evaluations(setup, workspace, checkpoints, split_specs, args)
+    report_root, rows, class_rows, val_python = run_evaluations(setup, workspace, checkpoints, split_specs, args)
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "workspace": str(workspace),
@@ -439,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         "checkpoints": [{"label": label, "path": str(path)} for label, path in checkpoints],
         "splits": split_specs,
         "rows": rows,
+        "class_rows": class_rows,
     }
     manifest_path = report_root / "paper_protocol_eval_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -463,6 +510,29 @@ def main(argv: list[str] | None = None) -> int:
     summary_csv = report_root / "paper_protocol_eval_summary.csv"
     write_csv_rows(summary_csv, rows, fieldnames)
 
+    classwise_csv = report_root / "paper_protocol_classwise_summary.csv"
+    if class_rows:
+        write_csv_rows(
+            classwise_csv,
+            class_rows,
+            [
+                "checkpoint_label",
+                "checkpoint_path",
+                "split",
+                "split_list",
+                "status",
+                "class_index",
+                "class",
+                "images",
+                "labels",
+                "precision",
+                "recall",
+                "map50",
+                "map50_95",
+                "log_file",
+            ],
+        )
+
     summary_md = report_root / "paper_protocol_eval_summary.md"
     summary_md.write_text(
         build_summary_markdown(workspace, report_root, rows, split_specs, checkpoints, val_python),
@@ -471,6 +541,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Saved: {manifest_path}")
     print(f"Saved: {summary_csv}")
+    if class_rows:
+        print(f"Saved: {classwise_csv}")
     print(f"Saved: {summary_md}")
     return 0
 
