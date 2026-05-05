@@ -100,3 +100,94 @@ Continue toward DQA-style aggregation only if at least one of these happens:
 If neither happens, the next project step should change pseudo-GT generation or
 loss design, not the DQA aggregation rule.
 
+## 02 Stable Pseudo-GT Condition
+
+02 changes pseudo-GT generation rather than DQA aggregation.
+
+| item | value |
+| --- | --- |
+| teacher | single copied warmup checkpoint |
+| target views | identity and horizontal flip |
+| pseudo-label acceptance | same class plus stable de-augmented box location |
+| default view requirement | both views must support the box |
+| default stability threshold | mean IoU to weighted box >= 0.58 |
+| default stable score | mean confidence * stability >= 0.16 |
+| training data | source cloudy labels plus stable target pseudo labels |
+| default output root | `output/02_stable_pseudogt/` |
+
+This intentionally avoids two-teacher designs.  The point is to ask whether a
+single model can avoid self-training drift when bbox labels are allowed to
+supervise regression only if their localization is augmentation-stable.
+
+## 02 Profiles
+
+| profile | scope | local epochs | main protection |
+| --- | --- | ---: | --- |
+| `stable_mix_backbone` | backbone | 3 | head is frozen; stable target boxes adapt features while source labels anchor the detector |
+| `stable_mix_all_lowlr` | all | 2 | full-model update uses low LR, source anchor, and stability-gated target boxes |
+| `stable_mix_neck_head` | neck/head | 2 | optional conservative head adaptation from high-quality stable boxes |
+
+Important diagnostics after running 02:
+
+| file | role |
+| --- | --- |
+| `output/02_stable_pseudogt/stats/02_pseudo_label_stats.csv` | per-client stable pseudo-label counts and means |
+| `output/02_stable_pseudogt/stats/02_*_stable_boxes.csv` | accepted pseudo boxes with confidence, stability, and score |
+| `output/02_stable_pseudogt/stats/02_manifest.json` | exact run settings and checkpoint list |
+| `output/02_stable_pseudogt/validation_reports/paper_protocol_eval_summary.csv` | scene-wise mAP comparison |
+
+## 03 Repair-Oriented Multi-Round Condition
+
+03 treats server repair as part of the method rather than as a secondary
+checkpoint.  The main unit is:
+
+1. current repaired global model generates stable pseudo labels
+2. clients train from that model with source cloudy GT plus target pseudo labels
+3. client checkpoints are aggregated
+4. aggregate checkpoint is repaired on source cloudy GT
+5. repaired checkpoint is evaluated and becomes the next round's global model
+
+Default 03 settings:
+
+| item | value |
+| --- | --- |
+| profile | `repair_oriented_all_lowlr` |
+| client epochs | 1 |
+| client train scope | all |
+| client LR | 0.0005 |
+| source repeat in client train | 2 |
+| pseudo repeat in client train | 1 |
+| server repair epochs | 1 |
+| server repair LR | 0.0008 |
+| default rounds | 3 |
+| default output root | `output/03_repair_oriented_multiround/` |
+
+Default pseudo-label filtering is stricter than 02:
+
+| item | value |
+| --- | ---: |
+| confidence threshold | 0.25 |
+| match IoU | 0.60 |
+| min stability | 0.72 |
+| min score | 0.28 |
+| max boxes/image | 12 |
+| max class fraction | 0.45 |
+
+Primary 03 metrics:
+
+| metric | role |
+| --- | --- |
+| final repaired mAP@0.5:0.95 | fixed-final-round score without GT-based checkpoint selection |
+| last-N average repaired mAP@0.5:0.95 | plateau/convergence score |
+| last-N minimum repaired mAP@0.5:0.95 | late-collapse check |
+| repair gain | diagnostic: repaired mAP minus aggregate mAP |
+| retained gain | diagnostic: repaired mAP minus warmup mAP |
+
+Important outputs:
+
+| file | role |
+| --- | --- |
+| `output/03_repair_oriented_multiround/stats/03_round_metrics.csv` | per-round repaired, aggregate, repair-gain, and retained-gain metrics |
+| `output/03_repair_oriented_multiround/stats/03_round_metrics_summary.json` | final/last-N metrics |
+| `output/03_repair_oriented_multiround/stats/03_round*_pseudo_label_stats.csv` | per-round pseudo-label diagnostics |
+| `output/03_repair_oriented_multiround/stats/03_checkpoints.csv` | saved checkpoints |

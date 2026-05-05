@@ -57,6 +57,21 @@ dynamic_quality_aware_classwise_aggregation/03_dqa_cwa_corrected_12h_reproductio
 dynamic_quality_aware_classwise_aggregation/03_2_dqa_cwa_corrected_12h_evaluation.ipynb
 ```
 
+New experiments are organized in self-contained subprojects so the older
+exploratory notebooks do not need to move.  The current next-line DQA project
+is:
+
+```text
+dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/
+```
+
+Its first notebook tests repair-oriented DQA on six `scene x day/night`
+clients:
+
+```text
+dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/notebooks/01_repair_oriented_scene_daynight_dqa.ipynb
+```
+
 ## Run Safety
 
 The runner is restartable and disk-conscious by default:

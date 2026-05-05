@@ -106,3 +106,79 @@ The intended success criteria for pseudo-GT learnability are:
 
 If neither condition holds, DQA should not be tuned further until pseudo-GT
 learning itself is changed.
+
+## 02 Experiment
+
+Notebook:
+
+```text
+pseudogt_learnability/notebooks/02_stable_pseudogt_learnability.ipynb
+```
+
+Runner:
+
+```text
+pseudogt_learnability/scripts/run_pseudogt_learnability_02.py
+```
+
+The 02 experiment changes the pseudo-GT generation step before changing DQA.
+It uses the copied warmup checkpoint as a single teacher and predicts each
+client target image twice:
+
+- original image
+- horizontal-flip image, de-augmented back to original coordinates
+
+Only boxes that keep the same class and nearly the same location across views
+are written as offline YOLO pseudo labels.  Client training then uses the same
+source labeled cloudy list plus the stable target pseudo-label list, so the
+source data remains an anchor while the target scene can still specialize the
+client.
+
+The default 02 profiles are:
+
+| profile | scope | intent |
+| --- | --- | --- |
+| `stable_mix_backbone` | backbone | Test whether stable target boxes can reproduce the Phase-1-like feature benefit. |
+| `stable_mix_all_lowlr` | all | Test whether full-model adaptation becomes safe when bbox labels are stability-gated. |
+| `stable_mix_neck_head` | neck/head | Optional high-precision head adaptation profile. |
+
+Key pseudo-label diagnostics are saved to:
+
+```text
+output/02_stable_pseudogt/stats/02_pseudo_label_stats.csv
+output/02_stable_pseudogt/stats/02_pseudo_label_stats.json
+```
+
+The important first check is whether stable pseudo labels are numerous enough
+and not dominated by one easy class.  Only after that should the mAP comparison
+against `warmup_global` be interpreted.
+
+## Repair-Oriented Direction
+
+After 02, the main objective is reframed from pseudo-GT-only client improvement
+to multi-round repaired-global improvement.  The current plan, metrics, and
+decision rules are documented in:
+
+```text
+pseudogt_learnability/REPAIR_ORIENTED_PSEUDOGT.md
+```
+
+Notebook 03 implements this direction:
+
+```text
+pseudogt_learnability/notebooks/03_repair_oriented_multiround_pseudogt.ipynb
+```
+
+Runner:
+
+```text
+pseudogt_learnability/scripts/run_pseudogt_learnability_03.py
+```
+
+03 evaluates repaired global checkpoints after every round.  Client and
+aggregate checkpoints are diagnostic; the primary metrics are saved to:
+
+```text
+output/03_repair_oriented_multiround/stats/03_round_metrics.csv
+output/03_repair_oriented_multiround/stats/03_round_metrics_summary.json
+```
