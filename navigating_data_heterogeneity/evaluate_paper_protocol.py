@@ -219,7 +219,7 @@ def write_eval_config(setup, report_root: Path, split: dict, args: argparse.Name
         train_scope="all",
         batch_size=args.batch_size,
         workers=0,
-        device=args.device,
+        device="",
     )
     cfg["Dataset"]["batch_size"] = args.batch_size
     cfg["Dataset"]["workers"] = 0

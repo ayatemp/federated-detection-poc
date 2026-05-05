@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from textwrap import dedent
 from pathlib import Path
 
 
@@ -12,20 +13,22 @@ NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "01_best_pseudogt_learnability.ipyn
 
 
 def md(source: str) -> dict:
+    source = dedent(source).strip()
     return {
         "cell_type": "markdown",
         "metadata": {},
-        "source": [line + "\n" for line in source.strip().splitlines()],
+        "source": [line + "\n" for line in source.splitlines()],
     }
 
 
 def code(source: str) -> dict:
+    source = dedent(source).strip()
     return {
         "cell_type": "code",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
-        "source": [line + "\n" for line in source.strip().splitlines()],
+        "source": [line + "\n" for line in source.splitlines()],
     }
 
 
@@ -239,4 +242,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

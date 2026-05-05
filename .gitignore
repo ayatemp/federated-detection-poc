@@ -3,6 +3,9 @@
 .idea/
 __pycache__/
 .ipynb_checkpoints/
+.env
+.env.*
+!.env.example
 *.pyc
 *.pyo
 *.yaml

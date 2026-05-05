@@ -38,6 +38,32 @@ def _threshold_list(value, nc, env_name):
         return [float(item) for item in value]
     return [float(value)] * nc
 
+
+def _cfg_get(node, name, default):
+    try:
+        return getattr(node, name)
+    except (AttributeError, KeyError):
+        return default
+
+
+def _bool_cfg_env(node, name, env_name, default=False):
+    raw = os.getenv(env_name)
+    if raw not in (None, ""):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(_cfg_get(node, name, default))
+
+
+def _float_cfg_env(node, name, env_name, default):
+    raw = os.getenv(env_name)
+    if raw not in (None, ""):
+        return float(raw)
+    return float(_cfg_get(node, name, default))
+
+
+def _clamp01(value):
+    return min(max(float(value), 0.0), 1.0)
+
+
 # for label match type semi spervised training
 class ComputeStudentMatchLoss():
     # Compute losses
@@ -78,6 +104,24 @@ class ComputeStudentMatchLoss():
             cfg.SSOD.ignore_thres_low,
             cfg.Dataset.nc,
             "DQA06_IGNORE_THRES_LOW",
+        )
+        self.tri_stage_gate = _bool_cfg_env(cfg.SSOD, "tri_stage_gate", "DQA08_TRI_STAGE_GATE", False)
+        self.ignore_thres_mid = _threshold_list(
+            _cfg_get(cfg.SSOD, "ignore_thres_mid", cfg.SSOD.ignore_thres_high),
+            cfg.Dataset.nc,
+            "DQA08_IGNORE_THRES_MID",
+        )
+        self.low_mid_obj_weight = _float_cfg_env(
+            cfg.SSOD,
+            "low_mid_obj_weight",
+            "DQA08_LOW_MID_OBJ_WEIGHT",
+            0.45,
+        )
+        self.mid_high_obj_weight = _float_cfg_env(
+            cfg.SSOD,
+            "mid_high_obj_weight",
+            "DQA08_MID_HIGH_OBJ_WEIGHT",
+            1.0,
         )
         self.uncertain_aug = cfg.SSOD.uncertain_aug
         self.use_ota = cfg.SSOD.use_ota
@@ -163,8 +207,24 @@ class ComputeStudentMatchLoss():
         for t in targets:
             #伪标签得分大于相应类别的阈值,标记为正样本
             t = np.array(t.cpu())
+            cls_idx = int(t[1])
+            if self.tri_stage_gate:
+                low = float(self.ignore_thres_low[cls_idx])
+                high = float(self.ignore_thres_high[cls_idx])
+                mid = min(max(float(self.ignore_thres_mid[cls_idx]), low), high)
+                score = float(t[6])
+                if score >= high:
+                    reliable_targets.append(t[:7])
+                elif score >= low:
+                    if self.pseudo_label_with_obj:
+                        obj_weight = self.mid_high_obj_weight if score >= mid else self.low_mid_obj_weight
+                        obj_score = np.array([_clamp01(t[7] * obj_weight)], dtype=t.dtype)
+                        uncertain_targets.append(np.concatenate((t[:6], obj_score)))
+                    else:
+                        uncertain_targets.append(t[:7])
+                continue
             # original logic
-            if t[6] >= self.ignore_thres_high[int(t[1])]:
+            if t[6] >= self.ignore_thres_high[cls_idx]:
                     reliable_targets.append(t[:7])
             # if t[6] >= self.ignore_thres_high[int(t[1])]:
             #     # if t[7] >= self.ignore_thres_high[int(t[1])] and t[8] >= self.ignore_thres_high[int(t[1])]:
@@ -178,7 +238,7 @@ class ComputeStudentMatchLoss():
             #         else:
             #             uncertain_targets.append(t[:7])
             #伪标签低阈值和高阈值之间的，标记为不确定样本
-            elif t[6] >= self.ignore_thres_low[int(t[1])]:
+            elif t[6] >= self.ignore_thres_low[cls_idx]:
                 if self.pseudo_label_with_obj:
                     uncertain_targets.append(np.concatenate((t[:6], t[7:8])))
                     #不确定样本里面obj特别高的，送出来修iou loss

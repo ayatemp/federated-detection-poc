@@ -1,0 +1,1515 @@
+[NbConvertApp] Converting notebook dynamic_quality_aware_classwise_aggregation/08_3_3_dqa_scene_phase2_anti_drift_sweep.ipynb to notebook
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/__main__.py", line 5, in <module>
+    main()
+  File "/opt/venv/lib/python3.12/site-packages/jupyter_core/application.py", line 284, in launch_instance
+    super().launch_instance(argv=argv, **kwargs)
+  File "/opt/venv/lib/python3.12/site-packages/traitlets/config/application.py", line 1075, in launch_instance
+    app.start()
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/nbconvertapp.py", line 420, in start
+    self.convert_notebooks()
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/nbconvertapp.py", line 597, in convert_notebooks
+    self.convert_single_notebook(notebook_filename)
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/nbconvertapp.py", line 563, in convert_single_notebook
+    output, resources = self.export_single_notebook(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/nbconvertapp.py", line 487, in export_single_notebook
+    output, resources = self.exporter.from_filename(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/exporters/exporter.py", line 201, in from_filename
+    return self.from_file(f, resources=resources, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/exporters/exporter.py", line 220, in from_file
+    return self.from_notebook_node(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/exporters/notebook.py", line 36, in from_notebook_node
+    nb_copy, resources = super().from_notebook_node(nb, resources, **kw)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/exporters/exporter.py", line 154, in from_notebook_node
+    nb_copy, resources = self._preprocess(nb_copy, resources)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/exporters/exporter.py", line 353, in _preprocess
+    nbc, resc = preprocessor(nbc, resc)
+                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/preprocessors/base.py", line 48, in __call__
+    return self.preprocess(nb, resources)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/preprocessors/execute.py", line 103, in preprocess
+    self.preprocess_cell(cell, resources, index)
+  File "/opt/venv/lib/python3.12/site-packages/nbconvert/preprocessors/execute.py", line 124, in preprocess_cell
+    cell = self.execute_cell(cell, index, store_history=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/jupyter_core/utils/__init__.py", line 165, in wrapped
+    return loop.run_until_complete(inner)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/opt/venv/lib/python3.12/site-packages/nbclient/client.py", line 1062, in async_execute_cell
+    await self._check_raise_for_error(cell, cell_index, exec_reply)
+  File "/opt/venv/lib/python3.12/site-packages/nbclient/client.py", line 918, in _check_raise_for_error
+    raise CellExecutionError.from_cell_and_msg(cell, exec_reply_content)
+nbclient.exceptions.CellExecutionError: An error occurred while executing the following cell:
+------------------
+# 実行セル。途中で止まっても history/global checkpoint があれば再利用します。
+if not selected:
+    raise RuntimeError("No selected variants")
+
+for variant in selected:
+    history = history_rows(variant)
+    completed_phase2 = sum(1 for row in history if int(row.get("phase", 0)) == 2)
+    print("\n===", variant["name"], "===")
+    print(variant["description"])
+    print(f"completed_phase2: {completed_phase2}/{PHASE2_ROUNDS_PER_VARIANT}")
+    if completed_phase2 >= PHASE2_ROUNDS_PER_VARIANT:
+        print("already completed")
+        continue
+
+    pid_path = variant_pid_path(variant)
+    existing_pid = read_pid(pid_path)
+    if pid_state(existing_pid) == "running":
+        print("already running pid:", existing_pid)
+        continue
+
+    runner_log = variant_runner_log(variant)
+    runner_log.parent.mkdir(parents=True, exist_ok=True)
+    cmd = train_cmd(variant)
+    env = variant_env(variant)
+    print("cmd:", " ".join(cmd))
+    print("runner_log:", runner_log)
+    print("train_log:", variant_train_log(variant))
+
+    with runner_log.open("a", encoding="utf-8", buffering=1) as log:
+        log.write("\n" + "=" * 100 + "\n")
+        log.write(" ".join(cmd) + "\n")
+        process = subprocess.Popen(
+            cmd,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        pid_path.write_text(str(process.pid), encoding="utf-8")
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="")
+            log.write(line)
+        rc = process.wait()
+        if rc != 0:
+            raise RuntimeError(f"{variant['name']} failed with exit code {rc}. See {runner_log}")
+        print("variant completed:", variant["name"])
+
+------------------
+
+----- stdout -----
+
+=== a_c_impulse_decay_r003 ===
+08_3_2 c bestを土台に、序盤だけpseudoGTを強く使い、後半はloss/residual/objを減衰して保存する。
+completed_phase2: 0/10
+cmd: /root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003 --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003 --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 29780 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log --classwise-blend 0.075 --server-anchor 10.0 --temperature 2.4 --stability-lambda 0.55 --dqa-start-phase 2 --min-free-gib 30
+runner_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_runner.out
+train_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+----- stdout -----
+Reusing 08_3_3 phase2 seed checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/round000_warmup.pt
+DQA08_3_3 profile: phase2-only FedSTO/DQA sweep
+DQA08_3_3 variant: a_c_impulse_decay_r003
+DQA08_3_3 profile mode: dqa_high_light
+DQA08_3_3 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 3
+DQA08_3_3 client train_scope: all
+DQA08_3_3 residual schedule: 0.1 -> 0.005
+DQA08_3_3 pseudo loss schedule: 0.34 -> 0.2 / box 0.01 -> 0.0
+DQA08_3_3 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/server_phase2_orthogonal.yaml"
+  }
+}
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+----- stdout -----
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=1 residual_blend=0.1000 min_server_alpha=0.740 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round001_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=2 residual_blend=0.0894 min_server_alpha=0.760 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round002_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=3 residual_blend=0.0789 min_server_alpha=0.780 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round3_dqa_phase2_round003_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round003_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=4 residual_blend=0.0683 min_server_alpha=0.800 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round4_dqa_phase2_round004_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 4: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round004_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=5 residual_blend=0.0578 min_server_alpha=0.820 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round5_dqa_phase2_round005_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 5: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round005_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=6 residual_blend=0.0472 min_server_alpha=0.840 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round6_dqa_phase2_round006_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 6: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round006_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=7 residual_blend=0.0367 min_server_alpha=0.860 classwise_blend=0.075 server_anchor=10.000
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round7_dqa_phase2_round007_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 7: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round007_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=8 residual_blend=0.0261 min_server_alpha=0.880 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round8_dqa_phase2_round008_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 8: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round008_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=9 residual_blend=0.0156 min_server_alpha=0.900 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round9_dqa_phase2_round009_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 9: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round009_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=a_c_impulse_decay_r003 profile=dqa_high_light round=10 residual_blend=0.0050 min_server_alpha=0.920 classwise_blend=0.075 server_anchor=10.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29780 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/configs/runtime_phase2_server_round10_dqa_phase2_round010_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003_train.log
+Completed DQA-CWA phase 2 round 10: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/a_c_impulse_decay_r003/global_checkpoints/phase2_round010_global.pt
+----- stdout -----
+variant completed: a_c_impulse_decay_r003
+
+=== b_strict_cap_decay_r003 ===
+08_3_2 dをさらに厳しくし、pseudo数capとbbox/cls早期減衰でlocalization崩壊を抑える。
+completed_phase2: 0/10
+cmd: /root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003 --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003 --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 29781 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log --classwise-blend 0.05 --server-anchor 14.0 --temperature 2.8 --stability-lambda 0.65 --dqa-start-phase 2 --min-free-gib 30
+runner_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_runner.out
+train_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+----- stdout -----
+Seeded 08_3_3 phase2 from DQA08 phase1 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/round000_warmup.pt
+DQA08_3_3 profile: phase2-only FedSTO/DQA sweep
+DQA08_3_3 variant: b_strict_cap_decay_r003
+DQA08_3_3 profile mode: dqa_high_light
+DQA08_3_3 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 3
+DQA08_3_3 client train_scope: all
+DQA08_3_3 residual schedule: 0.075 -> 0.0
+DQA08_3_3 pseudo loss schedule: 0.3 -> 0.16 / box 0.006 -> 0.0
+DQA08_3_3 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/server_phase2_orthogonal.yaml"
+  }
+}
+Downloading https://github.com/AlibabaResearch/efficientteacher/releases/download/1.0/efficient-yolov5l.pt -> /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/weights/efficient-yolov5l.pt
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=1 residual_blend=0.0750 min_server_alpha=0.820 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round001_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=2 residual_blend=0.0667 min_server_alpha=0.834 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round002_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=3 residual_blend=0.0583 min_server_alpha=0.849 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round3_dqa_phase2_round003_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round003_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client1_citystreet.yaml
+----- stdout -----
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=4 residual_blend=0.0500 min_server_alpha=0.863 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round4_dqa_phase2_round004_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 4: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round004_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=5 residual_blend=0.0417 min_server_alpha=0.878 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round5_dqa_phase2_round005_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 5: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round005_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=6 residual_blend=0.0333 min_server_alpha=0.892 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round6_dqa_phase2_round006_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 6: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round006_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=7 residual_blend=0.0250 min_server_alpha=0.907 classwise_blend=0.050 server_anchor=14.000
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round7_dqa_phase2_round007_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 7: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round007_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=8 residual_blend=0.0167 min_server_alpha=0.921 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round8_dqa_phase2_round008_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 8: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round008_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=9 residual_blend=0.0083 min_server_alpha=0.936 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round9_dqa_phase2_round009_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 9: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round009_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+DQA08_3_3 phase2 gate: variant=b_strict_cap_decay_r003 profile=dqa_high_light round=10 residual_blend=0.0000 min_server_alpha=0.950 classwise_blend=0.050 server_anchor=14.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29781 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/configs/runtime_phase2_server_round10_dqa_phase2_round010_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003_train.log
+Completed DQA-CWA phase 2 round 10: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/b_strict_cap_decay_r003/global_checkpoints/phase2_round010_global.pt
+----- stdout -----
+variant completed: b_strict_cap_decay_r003
+
+=== c_neck_head_safe_r003 ===
+client更新をneck/headに限定し、backbone driftを切り分ける。pseudoGTは使うがglobalへの入り口は狭くする。
+completed_phase2: 0/10
+cmd: /root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003 --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003 --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 29782 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log --classwise-blend 0.06 --server-anchor 12.0 --temperature 2.6 --stability-lambda 0.6 --dqa-start-phase 2 --min-free-gib 30
+runner_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_runner.out
+train_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+----- stdout -----
+Seeded 08_3_3 phase2 from DQA08 phase1 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/round000_warmup.pt
+DQA08_3_3 profile: phase2-only FedSTO/DQA sweep
+DQA08_3_3 variant: c_neck_head_safe_r003
+DQA08_3_3 profile mode: dqa_high_light
+DQA08_3_3 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 3
+DQA08_3_3 client train_scope: neck_head
+DQA08_3_3 residual schedule: 0.1 -> 0.015
+DQA08_3_3 pseudo loss schedule: 0.32 -> 0.18 / box 0.008 -> 0.001
+DQA08_3_3 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/server_phase2_orthogonal.yaml"
+  }
+}
+Downloading https://github.com/AlibabaResearch/efficientteacher/releases/download/1.0/efficient-yolov5l.pt -> /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/weights/efficient-yolov5l.pt
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=1 residual_blend=0.1000 min_server_alpha=0.780 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round001_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=2 residual_blend=0.0906 min_server_alpha=0.796 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round002_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=3 residual_blend=0.0811 min_server_alpha=0.811 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round3_dqa_phase2_round003_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round003_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client1_citystreet.yaml
+----- stdout -----
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=4 residual_blend=0.0717 min_server_alpha=0.827 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round4_dqa_phase2_round004_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 4: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round004_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=5 residual_blend=0.0622 min_server_alpha=0.842 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round5_dqa_phase2_round005_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 5: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round005_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=6 residual_blend=0.0528 min_server_alpha=0.858 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round6_dqa_phase2_round006_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 6: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round006_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=7 residual_blend=0.0433 min_server_alpha=0.873 classwise_blend=0.060 server_anchor=12.000
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round7_dqa_phase2_round007_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 7: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round007_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=8 residual_blend=0.0339 min_server_alpha=0.889 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round8_dqa_phase2_round008_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 8: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round008_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=9 residual_blend=0.0244 min_server_alpha=0.904 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round9_dqa_phase2_round009_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 9: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round009_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+DQA08_3_3 phase2 gate: variant=c_neck_head_safe_r003 profile=dqa_high_light round=10 residual_blend=0.0150 min_server_alpha=0.920 classwise_blend=0.060 server_anchor=12.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29782 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/configs/runtime_phase2_server_round10_dqa_phase2_round010_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003_train.log
+Completed DQA-CWA phase 2 round 10: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/c_neck_head_safe_r003/global_checkpoints/phase2_round010_global.pt
+----- stdout -----
+variant completed: c_neck_head_safe_r003
+
+=== d_non_backbone_recall_repair_r003 ===
+backboneを固定し、non_backboneでrecall補修。objは残し、bbox/clsはかなり弱くしてP崩れを抑える。
+completed_phase2: 0/10
+cmd: /root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003 --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003 --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 29783 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log --classwise-blend 0.05 --server-anchor 13.0 --temperature 2.7 --stability-lambda 0.65 --dqa-start-phase 2 --min-free-gib 30
+runner_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_runner.out
+train_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+----- stdout -----
+Seeded 08_3_3 phase2 from DQA08 phase1 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/round000_warmup.pt
+DQA08_3_3 profile: phase2-only FedSTO/DQA sweep
+DQA08_3_3 variant: d_non_backbone_recall_repair_r003
+DQA08_3_3 profile mode: dqa_high_light
+DQA08_3_3 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 3
+DQA08_3_3 client train_scope: non_backbone
+DQA08_3_3 residual schedule: 0.085 -> 0.01
+DQA08_3_3 pseudo loss schedule: 0.3 -> 0.18 / box 0.004 -> 0.0
+DQA08_3_3 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/server_phase2_orthogonal.yaml"
+  }
+}
+Downloading https://github.com/AlibabaResearch/efficientteacher/releases/download/1.0/efficient-yolov5l.pt -> /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/weights/efficient-yolov5l.pt
+----- stdout -----
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=1 residual_blend=0.0850 min_server_alpha=0.800 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round001_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=2 residual_blend=0.0767 min_server_alpha=0.816 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round002_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=3 residual_blend=0.0683 min_server_alpha=0.831 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round3_dqa_phase2_round003_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round003_global.pt
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=4 residual_blend=0.0600 min_server_alpha=0.847 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round4_dqa_phase2_round004_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 4: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round004_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=5 residual_blend=0.0517 min_server_alpha=0.862 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round5_dqa_phase2_round005_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 5: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round005_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=6 residual_blend=0.0433 min_server_alpha=0.878 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round6_dqa_phase2_round006_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 6: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round006_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=7 residual_blend=0.0350 min_server_alpha=0.893 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round7_dqa_phase2_round007_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 7: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round007_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=8 residual_blend=0.0267 min_server_alpha=0.909 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round8_dqa_phase2_round008_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 8: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round008_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=9 residual_blend=0.0183 min_server_alpha=0.924 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round9_dqa_phase2_round009_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 9: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round009_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+----- stdout -----
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+DQA08_3_3 phase2 gate: variant=d_non_backbone_recall_repair_r003 profile=dqa_high_light round=10 residual_blend=0.0100 min_server_alpha=0.940 classwise_blend=0.050 server_anchor=13.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29783 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/configs/runtime_phase2_server_round10_dqa_phase2_round010_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003_train.log
+Completed DQA-CWA phase 2 round 10: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/d_non_backbone_recall_repair_r003/global_checkpoints/phase2_round010_global.pt
+----- stdout -----
+variant completed: d_non_backbone_recall_repair_r003
+
+=== e_high_precision_seed_r012_recall_repair ===
+phase1 round12の高precision seedから開始し、DQAで少量のrecall回復だけを狙う。
+completed_phase2: 0/10
+cmd: /root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 29784 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log --classwise-blend 0.05 --server-anchor 15.0 --temperature 3.0 --stability-lambda 0.7 --dqa-start-phase 2 --min-free-gib 30
+runner_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_runner.out
+train_log: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+----- stdout -----
+Seeded 08_3_3 phase2 from DQA08 phase1 round 12: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/global_checkpoints/round000_warmup.pt
+DQA08_3_3 profile: phase2-only FedSTO/DQA sweep
+DQA08_3_3 variant: e_high_precision_seed_r012_recall_repair
+DQA08_3_3 profile mode: dqa_high_light
+DQA08_3_3 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 12
+DQA08_3_3 client train_scope: neck_head
+DQA08_3_3 residual schedule: 0.08 -> 0.005
+DQA08_3_3 pseudo loss schedule: 0.3 -> 0.14 / box 0.006 -> 0.0
+DQA08_3_3 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/server_phase2_orthogonal.yaml"
+  }
+}
+----- stdout -----
+Downloading https://github.com/AlibabaResearch/efficientteacher/releases/download/1.0/efficient-yolov5l.pt -> /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/weights/efficient-yolov5l.pt
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+DQA08_3_3 phase2 gate: variant=e_high_precision_seed_r012_recall_repair profile=dqa_high_light round=1 residual_blend=0.0800 min_server_alpha=0.840 classwise_blend=0.050 server_anchor=15.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/global_checkpoints/phase2_round001_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+DQA08_3_3 phase2 gate: variant=e_high_precision_seed_r012_recall_repair profile=dqa_high_light round=2 residual_blend=0.0717 min_server_alpha=0.853 classwise_blend=0.050 server_anchor=15.000
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/global_checkpoints/phase2_round002_global.pt
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training subprocess failed with exit code 1: /root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Last 120 lines from /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log:
+
+       0/0     42.8G      2873       640   0.03577   0.03706  0.004912     6.219:  90%|█████████ | 28/31 [00:58<00:02,  1.13it/s]
+       0/0     42.8G      2873       640   0.03577   0.03706  0.004912     6.219:  94%|█████████▎| 29/31 [00:58<00:01,  1.13it/s]/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/trainer/trainer.py:439: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with amp.autocast(enabled=self.cuda):
+/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/trainer/trainer.py:439: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with amp.autocast(enabled=self.cuda):
+
+       0/0     5.09G      1715       640    0.0358    0.0372  0.004939     6.126:  94%|█████████▎| 29/31 [01:31<00:01,  1.13it/s]
+       0/0     5.09G      1715       640    0.0358    0.0372  0.004939     6.126:  97%|█████████▋| 30/31 [01:31<00:10, 10.58s/it]/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/trainer/trainer.py:439: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with amp.autocast(enabled=self.cuda):
+
+       0/0       43G      2956       640   0.03578   0.03713  0.004933     6.122:  97%|█████████▋| 30/31 [01:32<00:10, 10.58s/it]
+       0/0       43G      2956       640   0.03578   0.03713  0.004933     6.122: 100%|██████████| 31/31 [01:32<00:00,  7.76s/it]
+       0/0       43G      2956       640   0.03578   0.03713  0.004933     6.122: 100%|██████████| 31/31 [01:32<00:00,  2.98s/it]
+
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:   0%|          | 0/5 [00:00<?, ?it/s]/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/functional.py:554: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /pytorch/aten/src/ATen/native/TensorShape.cpp:4322.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  20%|██        | 1/5 [00:03<00:12,  3.04s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  40%|████      | 2/5 [00:03<00:04,  1.62s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  60%|██████    | 3/5 [00:04<00:02,  1.15s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  80%|████████  | 4/5 [00:04<00:00,  1.08it/s]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100%|██████████| 5/5 [00:06<00:00,  1.11s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100%|██████████| 5/5 [00:06<00:00,  1.25s/it]
+                 all        738      14937      0.581      0.369      0.398      0.228
+Optimizer stripped from /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/runs/dqa_phase2_round002_server/weights/last.pt, 93.0MB
+Optimizer stripped from /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/runs/dqa_phase2_round002_server/weights/best.pt, 93.0MB
+
+Validating /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/runs/dqa_phase2_round002_server/weights/best.pt...
+Fusing layers...
+Model summary: 365 layers, 46156743 parameters, 0 gradients
+
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:   0%|          | 0/5 [00:00<?, ?it/s]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  20%|██        | 1/5 [00:00<00:03,  1.14it/s]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  40%|████      | 2/5 [00:01<00:03,  1.02s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  60%|██████    | 3/5 [00:03<00:02,  1.04s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95:  80%|████████  | 4/5 [00:04<00:01,  1.07s/it]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100%|██████████| 5/5 [00:04<00:00,  1.14it/s]
+               Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100%|██████████| 5/5 [00:04<00:00,  1.06it/s]
+                 all        738      14937      0.564      0.371      0.396      0.228
+                   0        738       1052      0.623      0.512      0.535      0.248
+                   1        738         44      0.443     0.0909      0.176     0.0849
+                   2        738       8622      0.744      0.705      0.754      0.484
+                   3        738        151      0.548      0.411      0.438      0.341
+                   4        738        467      0.523      0.557      0.548       0.39
+                   5        738         70      0.364      0.314      0.233      0.132
+                   6        738         65     0.0842    0.00907     0.0982     0.0491
+                   7        738       1619      0.634      0.557      0.594      0.244
+                   8        738       2845      0.677      0.558      0.586       0.31
+                   9        738          2          1          0   0.000172   0.000172
+Results saved to [1m/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/runs/dqa_phase2_round002_server[0m
+
+1 epochs completed in 0.031 hours.
+Destroying process group...
+[rank0]:[W502 22:10:25.535224153 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+
+====================================================================================================
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 29784 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed.
+*****************************************
+/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/cuda/__init__.py:829: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+Traceback (most recent call last):
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 84, in <module>
+    main(opt)
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 69, in main
+    device = setup(cfg)
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 53, in setup
+    assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
+AssertionError: insufficient CUDA devices for DDP command
+[34m[1mtrain: [0m__immutable__=False, __deprecated_keys__=set(), __renamed_keys__={}, __new_allowed__=False
+EfficientTeacher  c411d22 torch 2.8.0+cu128 CPU
+
+/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/cuda/__init__.py:829: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+Traceback (most recent call last):
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 84, in <module>
+    main(opt)
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 69, in main
+    device = setup(cfg)
+  File "/app/Object_Detection/navigating_data_heterogeneity/vendor/efficientteacher/train.py", line 53, in setup
+    assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
+AssertionError: insufficient CUDA devices for DDP command
+W0502 22:10:33.221000 3307179 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3307207 closing signal SIGTERM
+E0502 22:10:33.286000 3307179 site-packages/torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 1 (pid: 3307208) of binary: /root/micromamba/envs/al_yolov8/bin/python
+Traceback (most recent call last):
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/run.py", line 905, in <module>
+    main()
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/run.py", line 901, in main
+    run(args)
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/run.py", line 892, in run
+    elastic_launch(
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 143, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/root/micromamba/envs/al_yolov8/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+============================================================
+train.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-02_22:10:33
+  host      : e4b790bf3a37
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3307208)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+Traceback (most recent call last):
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py", line 261, in run_train
+    raise subprocess.CalledProcessError(return_code, cmd)
+subprocess.CalledProcessError: Command '['/root/micromamba/envs/al_yolov8/bin/python', '-m', 'torch.distributed.run', '--nproc_per_node', '2', '--master_port', '29784', 'train.py', '--cfg', '/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml']' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py", line 460, in <module>
+    main()
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py", line 456, in main
+    base.run_protocol(parsed)
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py", line 627, in run_protocol
+    ckpt = run_train(fedsto, cfg, args, extra_env=extra_env)
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_anti_drift_sweep.py", line 316, in _sweep_run_train
+    return _ORIGINAL_RUN_TRAIN(fedsto, config, args, extra_env=env or None)
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_tri_stage_policy.py", line 489, in _tri_stage_run_train
+    return _ORIGINAL_RUN_TRAIN(fedsto, config, args, extra_env=env or None)
+  File "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py", line 278, in run_train
+    raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
+RuntimeError: Training failed for /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml; see /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_train.log
+------------------
+
+[0;31m---------------------------------------------------------------------------[0m
+[0;31mRuntimeError[0m                              Traceback (most recent call last)
+Cell [0;32mIn[4], line 48[0m
+[1;32m     46[0m rc [38;5;241m=[39m process[38;5;241m.[39mwait()
+[1;32m     47[0m [38;5;28;01mif[39;00m rc [38;5;241m!=[39m [38;5;241m0[39m:
+[0;32m---> 48[0m     [38;5;28;01mraise[39;00m [38;5;167;01mRuntimeError[39;00m([38;5;124mf[39m[38;5;124m"[39m[38;5;132;01m{[39;00mvariant[[38;5;124m'[39m[38;5;124mname[39m[38;5;124m'[39m][38;5;132;01m}[39;00m[38;5;124m failed with exit code [39m[38;5;132;01m{[39;00mrc[38;5;132;01m}[39;00m[38;5;124m. See [39m[38;5;132;01m{[39;00mrunner_log[38;5;132;01m}[39;00m[38;5;124m"[39m)
+[1;32m     49[0m [38;5;28mprint[39m([38;5;124m"[39m[38;5;124mvariant completed:[39m[38;5;124m"[39m, variant[[38;5;124m"[39m[38;5;124mname[39m[38;5;124m"[39m])
+
+[0;31mRuntimeError[0m: e_high_precision_seed_r012_recall_repair failed with exit code 1. See /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_3_phase2_anti_drift_sweep/e_high_precision_seed_r012_recall_repair_runner.out
+

@@ -761,7 +761,7 @@ class LoadImagesAndLabels(Dataset):
             cls_tmp = np.zeros(self.nc)
             for label in self.labels:
                 for l in label:
-                    cls_tmp[int(l[0:1])] += 1
+                    cls_tmp[int(l[0])] += 1
             self.cls_ratio_gt = cls_tmp/np.sum(cls_tmp)
             self.label_num_per_image = np.sum(cls_tmp) / len(self.img_files)
             info = ' '.join([f'({v:.2f}-{i})' for i, v in enumerate(cls_tmp)])

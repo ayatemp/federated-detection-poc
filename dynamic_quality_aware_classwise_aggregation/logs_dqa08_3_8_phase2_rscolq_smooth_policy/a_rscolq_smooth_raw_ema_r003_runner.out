@@ -1,0 +1,288 @@
+
+====================================================================================================
+/root/micromamba/envs/al_yolov8/bin/python /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto_scene_v2_phase2_rscolq_smooth_policy.py --workspace-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003 --stats-root /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/stats_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003 --phase1-rounds 0 --phase2-rounds 10 --batch-size 160 --workers 10 --gpus 2 --master-port 30080 --log-file /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log --classwise-blend 0.06 --server-anchor 14.0 --temperature 2.8 --stability-lambda 0.68 --dqa-start-phase 2
+Seeded 08_3_8 phase2 from DQA08 phase1 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/round000_warmup.pt
+DQA08_3_8 profile: phase2-only R-SCoLQ-gated pseudo boxes
+DQA08_3_8 variant: a_rscolq_smooth_raw_ema_r003
+DQA08_3_8 seed: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_scene_tri_stage_policy_8h phase1 round 3
+DQA08_3_8 R-SCoLQ model: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+DQA08_3_8 thresholds: low=[0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12] mid=[0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 0.35] high=[0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 0.65]
+DQA08_3_8 client train_scope: all
+DQA08_3_8 residual schedule: 0.12 -> 0.05
+DQA08_3_8 pseudo loss: teacher=0.3 box=0.01 obj=0.3 cls=0.06
+DQA08_3_8 dqa_start_phase: 2
+{
+  "manifest": {
+    "paper": "Navigating Data Heterogeneity in Federated Learning: A Semi-Supervised Federated Object Detection",
+    "variant": "scene clients: highway, city street, residential",
+    "official_ssfod_repo": "https://github.com/Kthyeon/ssfod",
+    "official_ssfod_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "efficientteacher_repo": "https://github.com/AlibabaResearch/efficientteacher",
+    "efficientteacher_sha": "c411d22607c07a67ef632834eb15575f1df5c5f2",
+    "server": {
+      "weather": "cloudy represented by BDD100K Kaggle weather='partly cloudy'",
+      "train_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/server_cloudy_train.txt",
+      "val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/paper_eval_scene_total_val.txt",
+      "source_val_list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/server_cloudy_val.txt",
+      "train_images": 4881,
+      "val_images": 9864,
+      "source_val_images": 738,
+      "validation_target": "scene_total"
+    },
+    "clients": [
+      {
+        "id": 0,
+        "weather": "highway",
+        "scene": "highway",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/client_0_highway_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 1,
+        "weather": "citystreet",
+        "scene": "city street",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/client_1_citystreet_target.txt",
+        "images": 5000
+      },
+      {
+        "id": 2,
+        "weather": "residential",
+        "scene": "residential",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/client_2_residential_target.txt",
+        "images": 5000
+      }
+    ],
+    "paper_evaluation": {
+      "splits": [
+        {
+          "name": "highway",
+          "raw_scene": "highway",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/paper_eval_scene_highway_val.txt",
+          "images": 2499,
+          "boxes": 36377,
+          "class_counts": {
+            "car": 22337,
+            "traffic sign": 9278,
+            "traffic light": 2808,
+            "truck": 1040,
+            "person": 449,
+            "bus": 309,
+            "rider": 52,
+            "motor": 31,
+            "bike": 63,
+            "train": 10
+          }
+        },
+        {
+          "name": "citystreet",
+          "raw_scene": "city street",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/paper_eval_scene_citystreet_val.txt",
+          "images": 6112,
+          "boxes": 127178,
+          "class_counts": {
+            "traffic sign": 22635,
+            "traffic light": 22518,
+            "car": 63950,
+            "rider": 546,
+            "motor": 361,
+            "person": 12248,
+            "bus": 1229,
+            "truck": 2812,
+            "bike": 874,
+            "train": 5
+          }
+        },
+        {
+          "name": "residential",
+          "raw_scene": "residential",
+          "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/paper_eval_scene_residential_val.txt",
+          "images": 1253,
+          "boxes": 20855,
+          "class_counts": {
+            "traffic light": 1442,
+            "traffic sign": 2652,
+            "person": 669,
+            "rider": 59,
+            "bike": 101,
+            "car": 15396,
+            "bus": 113,
+            "truck": 359,
+            "motor": 64
+          }
+        }
+      ],
+      "total": {
+        "name": "scene_total",
+        "list": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/data_lists/paper_eval_scene_total_val.txt",
+        "images": 9864,
+        "source_splits": [
+          "highway",
+          "citystreet",
+          "residential"
+        ]
+      }
+    },
+    "classes": [
+      "person",
+      "rider",
+      "car",
+      "bus",
+      "truck",
+      "bike",
+      "motor",
+      "traffic light",
+      "traffic sign",
+      "train"
+    ],
+    "paper_schedule": {
+      "warmup_epochs": 50,
+      "phase1_rounds": 100,
+      "phase2_rounds": 150,
+      "local_epochs": 1
+    }
+  },
+  "configs": {
+    "server_warmup": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/server_warmup_yolov5l_bdd100k.yaml",
+    "client_0_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_0_highway_phase1.yaml",
+    "client_0_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_0_highway_phase2.yaml",
+    "client_1_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_1_citystreet_phase1.yaml",
+    "client_1_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_1_citystreet_phase2.yaml",
+    "client_2_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_2_residential_phase1.yaml",
+    "client_2_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/client_2_residential_phase2.yaml",
+    "server_phase1": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/server_phase1_backbone.yaml",
+    "server_phase2": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/server_phase2_orthogonal.yaml"
+  }
+}
+Downloading https://github.com/AlibabaResearch/efficientteacher/releases/download/1.0/efficient-yolov5l.pt -> /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/weights/efficient-yolov5l.pt
+Reusing completed warm-up checkpoint: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/round000_warmup.pt
+No completed DQA-CWA federated rounds found; starting from phase 1 round 1.
+DQA08_3_8 R-SCoLQ gate: client=0 round=1 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=no_previous_stats model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=1 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=no_previous_stats model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=1 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=no_previous_stats model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round1_dqa_phase2_round001_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=1 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.1200 min_server_alpha=0.720
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round1_dqa_phase2_round001_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 1: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round001_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=2 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=2 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=2 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round2_dqa_phase2_round002_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=2 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.1122 min_server_alpha=0.727
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round2_dqa_phase2_round002_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 2: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round002_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=3 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=3 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=3 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=1.000 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round3_dqa_phase2_round003_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=3 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.1044 min_server_alpha=0.733
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round3_dqa_phase2_round003_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 3: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round003_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=4 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=4 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=4 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round4_dqa_phase2_round004_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=4 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0967 min_server_alpha=0.740
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round4_dqa_phase2_round004_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 4: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round004_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=5 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=5 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=5 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.999 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round5_dqa_phase2_round005_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=5 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0889 min_server_alpha=0.747
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round5_dqa_phase2_round005_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 5: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round005_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=6 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=6 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=6 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round6_dqa_phase2_round006_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=6 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0811 min_server_alpha=0.753
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round6_dqa_phase2_round006_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 6: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round006_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=7 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=7 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=7 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round7_dqa_phase2_round007_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=7 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0733 min_server_alpha=0.760
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round7_dqa_phase2_round007_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 7: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round007_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=8 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=8 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=8 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round8_dqa_phase2_round008_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=8 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0656 min_server_alpha=0.767
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round8_dqa_phase2_round008_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 8: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round008_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=9 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=9 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=9 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.997 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round9_dqa_phase2_round009_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=9 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0578 min_server_alpha=0.773
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round9_dqa_phase2_round009_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 9: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round009_global.pt
+DQA08_3_8 R-SCoLQ gate: client=0 round=10 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client0_highway.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=1 round=10 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client1_citystreet.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 R-SCoLQ gate: client=2 round=10 low=0.12 mid=0.35 high=0.65 global_mult=1.000 target_mult=1.000 class_mult_mean=0.998 context=raw_stats_ema_policy model=/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/source_calibrated_localization_quality/artifacts/rscolq_best.joblib
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_client_round10_dqa_phase2_round010_client2_residential.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+DQA08_3_8 aggregate: variant=a_rscolq_smooth_raw_ema_r003 round=10 rscolq_high=0.65 rscolq_global_mult=1.000 rscolq_target_mult=1.000 residual_blend=0.0500 min_server_alpha=0.780
+/root/micromamba/envs/al_yolov8/bin/python -m torch.distributed.run --nproc_per_node 2 --master_port 30080 train.py --cfg /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/configs/runtime_phase2_server_round10_dqa_phase2_round010_server.yaml
+Training output appended to /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/logs_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003_train.log
+Completed DQA-CWA phase 2 round 10: /app/Object_Detection/dynamic_quality_aware_classwise_aggregation/efficientteacher_dqa08_3_8_phase2_rscolq_smooth_policy/a_rscolq_smooth_raw_ema_r003/global_checkpoints/phase2_round010_global.pt
