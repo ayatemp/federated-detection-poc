@@ -35,12 +35,18 @@ def spectral_orthogonal_regularization(model, weight=0.0, scope="non_backbone"):
     for name, param in model.named_parameters():
         if not param.requires_grad or param.ndim < 2 or not _parameter_in_scope(name, scope):
             continue
-        matrix = param.float().reshape(param.shape[0], -1)
+        param_device = param.device
+        matrix = param.float().reshape(param.shape[0], -1).contiguous()
         if matrix.numel() == 0:
             continue
-        gram = matrix.matmul(matrix.transpose(0, 1))
+        # Avoid intermittent cuBLAS failures from the full Gram product during Phase 2.
+        if matrix.is_cuda:
+            matrix = matrix.cpu()
+        gram = torch.mm(matrix, matrix.transpose(0, 1).contiguous())
         gram = gram - torch.eye(gram.shape[0], device=gram.device, dtype=gram.dtype)
         layer_penalty = _spectral_norm_power_iteration(gram)
+        if layer_penalty.device != param_device:
+            layer_penalty = layer_penalty.to(param_device)
         penalty = layer_penalty if penalty is None else penalty + layer_penalty
         count += 1
 

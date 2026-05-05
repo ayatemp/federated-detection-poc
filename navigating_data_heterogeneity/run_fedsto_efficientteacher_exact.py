@@ -19,6 +19,24 @@ PRETRAINED_PATH = setup.WORK_ROOT / "weights" / "efficient-yolov5l.pt"
 GLOBAL_DIR = setup.WORK_ROOT / "global_checkpoints"
 CLIENT_STATE_DIR = setup.WORK_ROOT / "client_states"
 HISTORY_PATH = setup.WORK_ROOT / "history.json"
+PROTOCOL_VERSION = "fedsto_alg1_server_after_client_aggregation_v1"
+
+
+def apply_workspace_root(workspace_root: Path) -> Path:
+    """Redirect generated configs, checkpoints, and manifests into a dedicated workspace."""
+    global PRETRAINED_PATH, GLOBAL_DIR, CLIENT_STATE_DIR, HISTORY_PATH
+
+    workspace_root = Path(workspace_root).resolve()
+    setup.WORK_ROOT = workspace_root
+    setup.LIST_ROOT = workspace_root / "data_lists"
+    setup.CONFIG_ROOT = workspace_root / "configs"
+    setup.RUN_ROOT = workspace_root / "runs"
+
+    PRETRAINED_PATH = workspace_root / "weights" / "efficient-yolov5l.pt"
+    GLOBAL_DIR = workspace_root / "global_checkpoints"
+    CLIENT_STATE_DIR = workspace_root / "client_states"
+    HISTORY_PATH = workspace_root / "history.json"
+    return workspace_root
 
 
 def ensure_efficientteacher_import_path() -> None:
@@ -74,6 +92,7 @@ def completed_history_prefix(
     phase1_rounds: int,
     phase2_rounds: int,
     warmup_checkpoint: Path,
+    expected_protocol: str | None = None,
 ) -> tuple[list[dict], Path, tuple[int, int] | None]:
     """Return the continuous completed prefix and the next phase/round to run."""
     by_round: dict[tuple[int, int], dict] = {}
@@ -89,6 +108,8 @@ def completed_history_prefix(
     for phase, rounds in [(1, phase1_rounds), (2, phase2_rounds)]:
         for round_idx in range(1, rounds + 1):
             entry = by_round.get((phase, round_idx))
+            if entry and expected_protocol and entry.get("protocol") != expected_protocol:
+                return normalized, current_global, (phase, round_idx)
             global_path = Path(entry.get("global", "")) if entry else None
             if global_path is not None and checkpoint_present(global_path):
                 current_global = global_path
@@ -97,6 +118,7 @@ def completed_history_prefix(
                         "phase": phase,
                         "round": round_idx,
                         "global": str(global_path.resolve()),
+                        **({"protocol": expected_protocol} if expected_protocol else {}),
                     }
                 )
                 continue
@@ -104,11 +126,46 @@ def completed_history_prefix(
     return normalized, current_global, None
 
 
-def reuse_checkpoint_if_valid(path: Path, description: str, *, force_retrain: bool) -> Path | None:
+def checkpoint_protocol(path: Path) -> str | None:
+    if not checkpoint_present(path):
+        return None
+    try:
+        checkpoint = _load(path)
+    except Exception:
+        return None
+    value = checkpoint.get("fedsto_protocol")
+    return str(value) if value is not None else None
+
+
+def checkpoint_matches_protocol(path: Path, expected_protocol: str | None) -> bool:
+    if expected_protocol is None:
+        return checkpoint_present(path)
+    return checkpoint_protocol(path) == expected_protocol
+
+
+def mark_checkpoint_protocol(path: Path, protocol: str, stage: str) -> Path:
+    checkpoint = _load(path)
+    checkpoint["fedsto_protocol"] = protocol
+    checkpoint["fedsto_stage"] = stage
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, path)
+    return path
+
+
+def reuse_checkpoint_if_valid(
+    path: Path,
+    description: str,
+    *,
+    force_retrain: bool,
+    expected_protocol: str | None = None,
+) -> Path | None:
     if force_retrain or not checkpoint_present(path):
         return None
     ok, reason = validate_checkpoint(path)
     if ok:
+        if expected_protocol and checkpoint_protocol(path) != expected_protocol:
+            print(f"Existing {description} checkpoint uses an older protocol; rerunning: {path}")
+            return None
         print(f"Reusing completed {description}: {path}")
         return path
     print(f"Existing {description} checkpoint is invalid ({reason}); rerunning.")
@@ -145,6 +202,9 @@ def cleanup_round_intermediates(phase: int, round_idx: int) -> tuple[int, int]:
         removed += count
         freed += size
     count, size = _remove_file(GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt")
+    removed += count
+    freed += size
+    count, size = _remove_file(GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_client_aggregate.pt")
     removed += count
     freed += size
     return removed, freed
@@ -213,6 +273,28 @@ def check_runtime_dependencies() -> None:
             + "\nInstall them in this kernel/environment, for example:\n"
             + install_hint
         )
+
+
+def resolve_gpus(requested_gpus: int) -> int:
+    """Avoid launching more DDP ranks than visible CUDA devices."""
+    if requested_gpus <= 1:
+        return max(1, requested_gpus)
+
+    visible_gpus = torch.cuda.device_count()
+    if visible_gpus >= requested_gpus:
+        return requested_gpus
+    if visible_gpus > 0:
+        print(
+            f"Requested {requested_gpus} GPUs, but only {visible_gpus} CUDA device(s) are visible; "
+            f"using --gpus {visible_gpus}."
+        )
+        return visible_gpus
+
+    print(
+        f"Requested {requested_gpus} GPUs, but no CUDA devices are visible; "
+        "falling back to single-process execution. Training will be CPU-only unless CUDA becomes available."
+    )
+    return 1
 
 
 def write_runtime_config(
@@ -290,7 +372,14 @@ def _is_backbone_key(key: str) -> bool:
     return "backbone" in lowered
 
 
-def make_start_checkpoint(global_ckpt: Path, out: Path, local_ema_ckpt: Path | None = None) -> Path:
+def make_start_checkpoint(
+    global_ckpt: Path,
+    out: Path,
+    local_ema_ckpt: Path | None = None,
+    *,
+    protocol: str | None = None,
+    stage: str | None = None,
+) -> Path:
     base = _load(global_ckpt)
     base = copy.deepcopy(base)
     base["epoch"] = -1
@@ -300,6 +389,10 @@ def make_start_checkpoint(global_ckpt: Path, out: Path, local_ema_ckpt: Path | N
         if local.get("ema") is not None:
             base["ema"] = copy.deepcopy(local["ema"])
             base["updates"] = local.get("updates", base.get("updates", 0))
+    if protocol is not None:
+        base["fedsto_protocol"] = protocol
+    if stage is not None:
+        base["fedsto_stage"] = stage
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(base, out)
     return out
@@ -332,10 +425,12 @@ def aggregate_checkpoints(paths: list[Path], base_path: Path, out: Path, *, back
 
 
 def run_protocol(args: argparse.Namespace) -> None:
+    apply_workspace_root(args.workspace_root)
     setup.build_base_configs()
     pretrained = PRETRAINED_PATH if args.dry_run else download_pretrained()
     if not args.dry_run:
         check_runtime_dependencies()
+    args.gpus = resolve_gpus(args.gpus)
     GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
     CLIENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     config_device = "" if args.gpus > 1 else args.device
@@ -382,6 +477,7 @@ def run_protocol(args: argparse.Namespace) -> None:
             phase1_rounds=args.phase1_rounds,
             phase2_rounds=args.phase2_rounds,
             warmup_checkpoint=current_global,
+            expected_protocol=PROTOCOL_VERSION,
         )
         if loaded_history != history:
             write_history(history)
@@ -413,10 +509,18 @@ def run_protocol(args: argparse.Namespace) -> None:
                 next_global,
                 f"global checkpoint for phase {phase} round {round_idx}",
                 force_retrain=args.force_retrain,
+                expected_protocol=PROTOCOL_VERSION,
             )
             if reused_global is not None:
                 current_global = reused_global
-                history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+                history.append(
+                    {
+                        "phase": phase,
+                        "round": round_idx,
+                        "global": str(current_global.resolve()),
+                        "protocol": PROTOCOL_VERSION,
+                    }
+                )
                 write_history(history)
                 completed.add((phase, round_idx))
                 print(f"Recovered phase {phase} round {round_idx} from existing global checkpoint.")
@@ -434,14 +538,26 @@ def run_protocol(args: argparse.Namespace) -> None:
                     checkpoint_path(run_name),
                     f"client run {run_name}",
                     force_retrain=args.force_retrain,
+                    expected_protocol=PROTOCOL_VERSION,
                 )
                 if ckpt is not None:
                     local_paths.append(ckpt)
-                    make_start_checkpoint(ckpt, previous)
+                    make_start_checkpoint(
+                        ckpt,
+                        previous,
+                        protocol=PROTOCOL_VERSION,
+                        stage=f"client_{client['id']}_latest",
+                    )
                     continue
 
-                if not checkpoint_present(start):
-                    make_start_checkpoint(current_global, start, previous)
+                if not checkpoint_matches_protocol(start, PROTOCOL_VERSION):
+                    make_start_checkpoint(
+                        current_global,
+                        start,
+                        previous,
+                        protocol=PROTOCOL_VERSION,
+                        stage=f"phase{phase}_round{round_idx:03d}_client{client['id']}_start",
+                    )
                 cfg = write_runtime_config(
                     run_name,
                     target=target,
@@ -454,19 +570,43 @@ def run_protocol(args: argparse.Namespace) -> None:
                     device=config_device,
                 )
                 ckpt = run_train(cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+                if not args.dry_run:
+                    mark_checkpoint_protocol(
+                        ckpt,
+                        PROTOCOL_VERSION,
+                        f"phase{phase}_round{round_idx:03d}_client{client['id']}",
+                    )
                 local_paths.append(ckpt)
-                make_start_checkpoint(ckpt, previous)
+                make_start_checkpoint(
+                    ckpt,
+                    previous,
+                    protocol=PROTOCOL_VERSION,
+                    stage=f"client_{client['id']}_latest",
+                )
 
+            client_aggregate = GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_client_aggregate.pt"
+            aggregate_checkpoints(local_paths, current_global, client_aggregate, backbone_only=(phase == 1))
+            mark_checkpoint_protocol(
+                client_aggregate,
+                PROTOCOL_VERSION,
+                f"phase{phase}_round{round_idx:03d}_client_aggregate",
+            )
             server_start = GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt"
             server_name = f"phase{phase}_round{round_idx:03d}_server"
             server_ckpt = reuse_checkpoint_if_valid(
                 checkpoint_path(server_name),
                 f"server run {server_name}",
                 force_retrain=args.force_retrain,
+                expected_protocol=PROTOCOL_VERSION,
             )
             if server_ckpt is None:
-                if not checkpoint_present(server_start):
-                    make_start_checkpoint(current_global, server_start)
+                if not checkpoint_matches_protocol(server_start, PROTOCOL_VERSION):
+                    make_start_checkpoint(
+                        client_aggregate,
+                        server_start,
+                        protocol=PROTOCOL_VERSION,
+                        stage=f"phase{phase}_round{round_idx:03d}_server_start",
+                    )
                 server_cfg = write_runtime_config(
                     server_name,
                     target=None,
@@ -479,10 +619,28 @@ def run_protocol(args: argparse.Namespace) -> None:
                     device=config_device,
                 )
                 server_ckpt = run_train(server_cfg, args.dry_run, gpus=args.gpus, master_port=args.master_port)
+                if not args.dry_run:
+                    mark_checkpoint_protocol(
+                        server_ckpt,
+                        PROTOCOL_VERSION,
+                        f"phase{phase}_round{round_idx:03d}_server_update",
+                    )
 
-            aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=(phase == 1))
+            make_start_checkpoint(
+                server_ckpt,
+                next_global,
+                protocol=PROTOCOL_VERSION,
+                stage=f"phase{phase}_round{round_idx:03d}_global_after_server_update",
+            )
             current_global = next_global
-            history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+            history.append(
+                {
+                    "phase": phase,
+                    "round": round_idx,
+                    "global": str(current_global.resolve()),
+                    "protocol": PROTOCOL_VERSION,
+                }
+            )
             write_history(history)
             completed.add((phase, round_idx))
             print(f"Completed phase {phase} round {round_idx}: {current_global}")
@@ -492,6 +650,12 @@ def run_protocol(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--workspace-root",
+        type=Path,
+        default=setup.WORK_ROOT,
+        help="Directory that stores manifests, configs, checkpoints, and logs for this FedSTO run.",
+    )
     parser.add_argument("--setup-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--warmup-epochs", type=int, default=50)
@@ -516,6 +680,7 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     parsed = parse_args()
+    apply_workspace_root(parsed.workspace_root)
     if parsed.setup_only:
         setup.build_base_configs()
     else:

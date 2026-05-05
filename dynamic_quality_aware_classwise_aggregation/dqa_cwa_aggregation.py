@@ -5,7 +5,7 @@ This module implements a conservative version of the research idea:
 
 * regular FedAvg for backbone, neck, objectness, and box regression rows;
 * dynamic class-wise weighted aggregation for classification-head rows only;
-* reliability from pseudo-label quantity and quality, smoothed across rounds;
+* reliability from pseudo-label quantity and objectness/localization-aware quality;
 * optional server-head anchoring so labeled server updates are not erased by
   noisy client pseudo labels.
 
@@ -46,12 +46,13 @@ class AggregationConfig:
     alpha_ema: float = 0.50
     temperature: float = 1.50
     uniform_mix: float = 0.05
-    classwise_blend: float = 0.75
+    classwise_blend: float = 0.35
     stability_lambda: float = 0.25
     min_effective_count: float = 1.0
     min_quality: float = 0.05
     max_quality: float = 1.0
-    server_anchor: float = 0.50
+    server_anchor: float = 1.25
+    localize_bn: bool = True
 
     def validate(self) -> None:
         if self.num_classes <= 0:
@@ -71,13 +72,63 @@ class ClientClassStats:
     client_id: str
     counts: list[float]
     mean_confidences: list[float]
+    mean_objectness: list[float]
+    mean_class_confidences: list[float]
+    mean_localization_qualities: list[float]
+    mean_quality_scores: list[float]
 
     @classmethod
     def from_mapping(cls, item: Mapping[str, Any], num_classes: int, default_id: str) -> "ClientClassStats":
         client_id = str(item.get("client_id", item.get("id", item.get("name", default_id))))
         counts = _class_vector(item, num_classes, ("counts", "count", "n", "pseudo_counts", "num_pseudo"))
         mean_confidences = _confidence_vector(item, num_classes, counts)
-        return cls(client_id=client_id, counts=counts, mean_confidences=mean_confidences)
+        mean_objectness = _optional_mean_vector(
+            item,
+            num_classes,
+            counts,
+            mean_keys=("mean_objectness", "objectness", "obj_confidences", "mean_obj_confidences"),
+            sum_keys=("objectness_sums", "objectness_sum", "obj_confidence_sums", "obj_confidence_sum"),
+            default=mean_confidences,
+        )
+        mean_class_confidences = _optional_mean_vector(
+            item,
+            num_classes,
+            counts,
+            mean_keys=("mean_class_confidences", "class_confidences", "mean_cls_confidences", "cls_confidences"),
+            sum_keys=("class_confidence_sums", "class_confidence_sum", "cls_confidence_sums", "cls_confidence_sum"),
+            default=mean_confidences,
+        )
+        mean_localization_qualities = _optional_mean_vector(
+            item,
+            num_classes,
+            counts,
+            mean_keys=("mean_localization_qualities", "localization_qualities", "mean_box_qualities", "box_qualities"),
+            sum_keys=("localization_sums", "localization_sum", "box_quality_sums", "box_quality_sum"),
+            default=[1.0 if count > 0 else 0.0 for count in counts],
+        )
+        combined_quality = _combined_quality(
+            mean_confidences,
+            mean_objectness,
+            mean_class_confidences,
+            mean_localization_qualities,
+        )
+        mean_quality_scores = _optional_mean_vector(
+            item,
+            num_classes,
+            counts,
+            mean_keys=("mean_quality_scores", "quality_scores", "mean_quality", "quality"),
+            sum_keys=("quality_sums", "quality_sum"),
+            default=combined_quality,
+        )
+        return cls(
+            client_id=client_id,
+            counts=counts,
+            mean_confidences=mean_confidences,
+            mean_objectness=mean_objectness,
+            mean_class_confidences=mean_class_confidences,
+            mean_localization_qualities=mean_localization_qualities,
+            mean_quality_scores=mean_quality_scores,
+        )
 
 
 def _class_vector(item: Mapping[str, Any], num_classes: int, keys: Sequence[str]) -> list[float]:
@@ -95,6 +146,13 @@ def _class_vector(item: Mapping[str, Any], num_classes: int, keys: Sequence[str]
     raise ValueError(f"missing one of {keys}")
 
 
+def _maybe_class_vector(item: Mapping[str, Any], num_classes: int, keys: Sequence[str]) -> list[float] | None:
+    for key in keys:
+        if key in item:
+            return _class_vector(item, num_classes, (key,))
+    return None
+
+
 def _confidence_vector(item: Mapping[str, Any], num_classes: int, counts: Sequence[float]) -> list[float]:
     for key in ("mean_confidences", "mean_confidence", "confidences", "confidence", "quality", "scores"):
         if key in item:
@@ -106,6 +164,49 @@ def _confidence_vector(item: Mapping[str, Any], num_classes: int, counts: Sequen
             return [float(total) / max(float(count), EPS) for total, count in zip(sums, counts)]
 
     raise ValueError("missing mean confidence or confidence_sum fields")
+
+
+def _optional_mean_vector(
+    item: Mapping[str, Any],
+    num_classes: int,
+    counts: Sequence[float],
+    *,
+    mean_keys: Sequence[str],
+    sum_keys: Sequence[str],
+    default: Sequence[float],
+) -> list[float]:
+    mean = _maybe_class_vector(item, num_classes, mean_keys)
+    if mean is not None:
+        return mean
+
+    sums = _maybe_class_vector(item, num_classes, sum_keys)
+    if sums is not None:
+        return [float(total) / max(float(count), EPS) for total, count in zip(sums, counts)]
+
+    return [float(x) for x in default]
+
+
+def _combined_quality(
+    confidences: Sequence[float],
+    objectness: Sequence[float],
+    class_confidences: Sequence[float],
+    localization_qualities: Sequence[float],
+) -> list[float]:
+    values = []
+    for confidence, obj, cls_conf, localization in zip(
+        confidences,
+        objectness,
+        class_confidences,
+        localization_qualities,
+    ):
+        quality = (
+            0.50 * float(confidence)
+            + 0.20 * float(obj)
+            + 0.20 * float(cls_conf)
+            + 0.10 * float(localization)
+        )
+        values.append(min(max(quality, 0.0), 1.0))
+    return values
 
 
 def load_round_stats(path: Path, num_classes: int) -> list[ClientClassStats]:
@@ -191,7 +292,7 @@ def compute_reliability(
         next_prev_quality = []
         for class_idx in range(config.num_classes):
             raw_count = max(float(item.counts[class_idx]), 0.0)
-            raw_quality = min(max(float(item.mean_confidences[class_idx]), 0.0), 1.0)
+            raw_quality = min(max(float(item.mean_quality_scores[class_idx]), 0.0), 1.0)
 
             old_count = float(previous["count_ema"][class_idx])
             old_quality = float(previous["quality_ema"][class_idx])
@@ -289,10 +390,30 @@ def _replace_model_state(checkpoint: dict[str, Any], state_dict: Mapping[str, to
         raise TypeError(f"checkpoint[{key!r}] is neither a module nor a state dict")
 
 
-def _fedavg_state_dicts(state_dicts: Sequence[Mapping[str, torch.Tensor]], base: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def _is_batchnorm_key(key: str) -> bool:
+    lowered = key.lower()
+    return (
+        ".bn." in lowered
+        or lowered.endswith(".bn.weight")
+        or lowered.endswith(".bn.bias")
+        or "batchnorm" in lowered
+        or lowered.endswith("running_mean")
+        or lowered.endswith("running_var")
+        or lowered.endswith("num_batches_tracked")
+    )
+
+
+def _fedavg_state_dicts(
+    state_dicts: Sequence[Mapping[str, torch.Tensor]],
+    base: Mapping[str, torch.Tensor],
+    *,
+    localize_bn: bool = False,
+) -> dict[str, torch.Tensor]:
     averaged: dict[str, torch.Tensor] = {}
     for key, value in base.items():
-        if torch.is_tensor(value) and value.dtype.is_floating_point:
+        if localize_bn and _is_batchnorm_key(key):
+            averaged[key] = value
+        elif torch.is_tensor(value) and value.dtype.is_floating_point:
             averaged[key] = torch.stack([state[key].float() for state in state_dicts], dim=0).mean(dim=0).to(value.dtype)
         else:
             averaged[key] = value
@@ -384,21 +505,30 @@ def aggregate_checkpoints(
     server_ckpt = _load_checkpoint(server_checkpoint, repo_root)
     base = copy.deepcopy(server_ckpt)
 
-    source_ckpts = client_ckpts + [server_ckpt]
-    source_state_dicts = [_model_state_dict(ckpt, "model") for ckpt in source_ckpts]
-    dynamic_state_dicts = source_state_dicts if len(source_ids) == len(source_state_dicts) else source_state_dicts[: len(source_ids)]
+    client_state_dicts = [_model_state_dict(ckpt, "model") for ckpt in client_ckpts]
+    server_state_dict = _model_state_dict(server_ckpt, "model")
+    dynamic_state_dicts = (
+        client_state_dicts + [server_state_dict]
+        if len(source_ids) == len(client_state_dicts) + 1
+        else client_state_dicts[: len(source_ids)]
+    )
     base_state = _model_state_dict(base, "model")
 
-    averaged = _fedavg_state_dicts(source_state_dicts, base_state)
+    averaged = _fedavg_state_dicts(client_state_dicts, base_state, localize_bn=config.localize_bn)
     dynamic = apply_dynamic_classwise_head(averaged, dynamic_state_dicts, alpha, active, config)
     _replace_model_state(base, dynamic, "model")
 
     if base.get("ema") is not None:
-        ema_source_dicts = [_model_state_dict(ckpt, "ema") for ckpt in source_ckpts if ckpt.get("ema") is not None]
-        if len(ema_source_dicts) == len(source_ckpts):
-            ema_dynamic_dicts = ema_source_dicts if len(source_ids) == len(ema_source_dicts) else ema_source_dicts[: len(source_ids)]
+        ema_client_dicts = [_model_state_dict(ckpt, "ema") for ckpt in client_ckpts if ckpt.get("ema") is not None]
+        server_ema = _model_state_dict(server_ckpt, "ema") if server_ckpt.get("ema") is not None else None
+        if len(ema_client_dicts) == len(client_ckpts) and server_ema is not None:
+            ema_dynamic_dicts = (
+                ema_client_dicts + [server_ema]
+                if len(source_ids) == len(ema_client_dicts) + 1
+                else ema_client_dicts[: len(source_ids)]
+            )
             ema_base = _model_state_dict(base, "ema")
-            ema_avg = _fedavg_state_dicts(ema_source_dicts, ema_base)
+            ema_avg = _fedavg_state_dicts(ema_client_dicts, ema_base, localize_bn=config.localize_bn)
             ema_dynamic = apply_dynamic_classwise_head(ema_avg, ema_dynamic_dicts, alpha, active, config)
             _replace_model_state(base, ema_dynamic, "ema")
 
@@ -414,12 +544,56 @@ def aggregate_checkpoints(
     return output_checkpoint, state
 
 
+def aggregate_fedavg_checkpoints(
+    client_checkpoints: Sequence[Path],
+    server_checkpoint: Path,
+    output_checkpoint: Path,
+    *,
+    repo_root: Path,
+    localize_bn: bool = True,
+) -> Path:
+    """FedAvg fallback used when DQA stats look collapsed or unsafe."""
+
+    client_ckpts = [_load_checkpoint(path, repo_root) for path in client_checkpoints]
+    server_ckpt = _load_checkpoint(server_checkpoint, repo_root)
+    base = copy.deepcopy(server_ckpt)
+
+    client_state_dicts = [_model_state_dict(ckpt, "model") for ckpt in client_ckpts]
+    base_state = _model_state_dict(base, "model")
+    averaged = _fedavg_state_dicts(client_state_dicts, base_state, localize_bn=localize_bn)
+    _replace_model_state(base, averaged, "model")
+
+    if base.get("ema") is not None:
+        ema_client_dicts = [_model_state_dict(ckpt, "ema") for ckpt in client_ckpts if ckpt.get("ema") is not None]
+        if len(ema_client_dicts) == len(client_ckpts):
+            ema_base = _model_state_dict(base, "ema")
+            ema_avg = _fedavg_state_dicts(ema_client_dicts, ema_base, localize_bn=localize_bn)
+            _replace_model_state(base, ema_avg, "ema")
+
+    base["epoch"] = -1
+    base["optimizer"] = None
+    output_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(base, output_checkpoint)
+    return output_checkpoint
+
+
 def _self_test() -> None:
     num_classes = 2
     cfg = AggregationConfig(num_classes=num_classes, server_anchor=0.0, classwise_blend=1.0)
+    def make_stats(client_id: str, counts: list[float], qualities: list[float]) -> ClientClassStats:
+        return ClientClassStats(
+            client_id,
+            counts,
+            qualities,
+            qualities,
+            qualities,
+            [1.0 if count > 0 else 0.0 for count in counts],
+            qualities,
+        )
+
     stats = [
-        ClientClassStats("a", [100, 1], [0.9, 0.4]),
-        ClientClassStats("b", [1, 100], [0.4, 0.9]),
+        make_stats("a", [100, 1], [0.9, 0.4]),
+        make_stats("b", [1, 100], [0.4, 0.9]),
     ]
     state, alpha, _, active = compute_reliability(stats, {"clients": {}, "alpha": {}}, cfg)
     assert alpha[0, 0] > alpha[1, 0], alpha
@@ -468,11 +642,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     aggregate.add_argument("--out", type=Path, required=True)
     aggregate.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     aggregate.add_argument("--num-classes", type=int, default=10)
-    aggregate.add_argument("--classwise-blend", type=float, default=0.75)
+    aggregate.add_argument("--classwise-blend", type=float, default=0.35)
     aggregate.add_argument("--temperature", type=float, default=1.50)
     aggregate.add_argument("--uniform-mix", type=float, default=0.05)
-    aggregate.add_argument("--server-anchor", type=float, default=0.50)
+    aggregate.add_argument("--server-anchor", type=float, default=1.25)
     aggregate.add_argument("--stability-lambda", type=float, default=0.25)
+    aggregate.add_argument("--localize-bn", action=argparse.BooleanOptionalAction, default=True)
 
     subparsers.add_parser("self-test", help="run synthetic aggregation checks")
     return parser
@@ -492,6 +667,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         uniform_mix=args.uniform_mix,
         server_anchor=args.server_anchor,
         stability_lambda=args.stability_lambda,
+        localize_bn=args.localize_bn,
     )
     stats = load_round_stats(args.stats, config.num_classes)
     out, state = aggregate_checkpoints(

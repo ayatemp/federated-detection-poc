@@ -88,15 +88,545 @@ class SSODTrainer(Trainer):
         self.dqa_client_id = os.getenv("DQA_CLIENT_ID", "").strip()
         self.dqa_phase = os.getenv("DQA_PHASE", "").strip()
         self.dqa_round = os.getenv("DQA_ROUND", "").strip()
+        self.dqa_quality_mode = os.getenv(
+            "DQA0834_STATS_QUALITY_MODE",
+            os.getenv("DQA_STATS_QUALITY_MODE", "confidence"),
+        ).strip().lower()
+        self.dqa0836_scolq_enabled = (
+            os.getenv("DQA0836_SCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0837_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0838_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0839_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        self.dqa0836_scolq_model_path = os.getenv(
+            "DQA0836_SCOLQ_MODEL",
+            os.getenv("DQA0837_RSCOLQ_MODEL", os.getenv("DQA0838_RSCOLQ_MODEL", os.getenv("DQA0839_RSCOLQ_MODEL", ""))),
+        ).strip()
+        self.dqa0836_scolq_score_power = float(os.getenv(
+            "DQA0836_SCOLQ_SCORE_POWER",
+            os.getenv("DQA0837_RSCOLQ_SCORE_POWER", os.getenv("DQA0838_RSCOLQ_SCORE_POWER", os.getenv("DQA0839_RSCOLQ_SCORE_POWER", "1.0"))),
+        ))
+        self.dqa0837_rscolq_enabled = (
+            os.getenv("DQA0837_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0838_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0839_RSCOLQ_ENABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        self.dqa0837_rscolq_global_multiplier = float(os.getenv(
+            "DQA0837_RSCOLQ_GLOBAL_MULTIPLIER",
+            os.getenv("DQA0838_RSCOLQ_GLOBAL_MULTIPLIER", os.getenv("DQA0839_RSCOLQ_GLOBAL_MULTIPLIER", "1.0")),
+        ))
+        self.dqa0837_rscolq_class_multipliers = os.getenv(
+            "DQA0837_RSCOLQ_CLASS_MULTIPLIERS",
+            os.getenv("DQA0838_RSCOLQ_CLASS_MULTIPLIERS", os.getenv("DQA0839_RSCOLQ_CLASS_MULTIPLIERS", "")),
+        ).strip()
+        self.dqa0838_rscolq_raw_stats = (
+            os.getenv("DQA0838_RSCOLQ_RAW_STATS", "").strip().lower() in {"1", "true", "yes", "on"}
+            or os.getenv("DQA0839_RSCOLQ_RAW_STATS", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        self.dqa0838_last_raw_rscolq_scores = None
+        self.dqa0836_scolq_bundle = None
+        self.dqa0836_scolq_features = None
+        self.dqa0836_source_gt_prior = None
+        self.dqa0835_memory_enabled = os.getenv("DQA0835_PSEUDO_MEMORY", "").strip().lower() in {"1", "true", "yes", "on"}
+        self.dqa0835_memory_path = os.getenv("DQA0835_PSEUDO_MEMORY_PATH", "").strip()
+        self.dqa0835_memory_iou = float(os.getenv("DQA0835_MEMORY_IOU", "0.55"))
+        self.dqa0835_memory_merge_iou = float(os.getenv("DQA0835_MEMORY_MERGE_IOU", "0.70"))
+        self.dqa0835_stable_rounds = max(int(os.getenv("DQA0835_STABLE_ROUNDS", "2")), 1)
+        self.dqa0835_new_score_cap = float(os.getenv("DQA0835_NEW_SCORE_CAP", "0.70"))
+        self.dqa0835_matched_score_cap = float(os.getenv("DQA0835_MATCHED_SCORE_CAP", "0.74"))
+        self.dqa0835_stable_score_floor = float(os.getenv("DQA0835_STABLE_SCORE_FLOOR", "0.78"))
+        self.dqa0835_stable_obj_floor = float(os.getenv("DQA0835_STABLE_OBJ_FLOOR", "0.85"))
+        self.dqa0835_stable_cls_floor = float(os.getenv("DQA0835_STABLE_CLS_FLOOR", "0.85"))
+        self.dqa0835_max_entries_per_image = max(int(os.getenv("DQA0835_MAX_ENTRIES_PER_IMAGE", "80")), 1)
+        self.dqa0835_memory = self._load_dqa0835_pseudo_memory()
+        self.dqa0835_base_memory = copy.deepcopy(self.dqa0835_memory)
+        self.dqa0835_seen_memory_keys = set()
+        self.dqa0835_memory_matches = 0
+        self.dqa0835_memory_stable = 0
+        self.dqa0835_memory_total = 0
         self.dqa_track_pseudo_stats = bool(self.dqa_pseudo_stats_out) and cfg.SSOD.train_domain
         if self.dqa_track_pseudo_stats:
             self.dqa_pseudo_counts = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
             self.dqa_pseudo_confidence_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_objectness_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_class_confidence_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_localization_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_feature_quality_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_feature_contrast_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
+            self.dqa_pseudo_quality_sums = torch.zeros(int(cfg.Dataset.nc), dtype=torch.float64)
         else:
             self.dqa_pseudo_counts = None
             self.dqa_pseudo_confidence_sums = None
+            self.dqa_pseudo_objectness_sums = None
+            self.dqa_pseudo_class_confidence_sums = None
+            self.dqa_pseudo_localization_sums = None
+            self.dqa_pseudo_feature_quality_sums = None
+            self.dqa_pseudo_feature_contrast_sums = None
+            self.dqa_pseudo_quality_sums = None
 
-    def _update_dqa_pseudo_stats(self, unlabeled_targets, invalid_target_shape):
+    def _dqa0835_rank_memory_path(self) -> Path | None:
+        if not self.dqa0835_memory_enabled or not self.dqa0835_memory_path:
+            return None
+        base = Path(self.dqa0835_memory_path)
+        if self.RANK in (-1, 0) and not dist.is_available():
+            return base
+        rank = self.RANK if self.RANK not in (-1, None) else 0
+        return base.with_name(f"{base.stem}.rank{rank}{base.suffix or '.json'}")
+
+    @staticmethod
+    def _dqa0835_xywh_iou(box_a, box_b) -> float:
+        ax, ay, aw, ah = [float(x) for x in box_a]
+        bx, by, bw, bh = [float(x) for x in box_b]
+        ax1, ay1, ax2, ay2 = ax - aw / 2.0, ay - ah / 2.0, ax + aw / 2.0, ay + ah / 2.0
+        bx1, by1, bx2, by2 = bx - bw / 2.0, by - bh / 2.0, bx + bw / 2.0, by + bh / 2.0
+        inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+        inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+        inter = inter_w * inter_h
+        area_a = max(0.0, aw) * max(0.0, ah)
+        area_b = max(0.0, bw) * max(0.0, bh)
+        union = area_a + area_b - inter
+        return inter / union if union > 1e-12 else 0.0
+
+    def _dqa0835_merge_memory_entries(self, entries):
+        cleaned = []
+        for entry in entries:
+            try:
+                cls_id = int(entry.get("cls", -1))
+                box = [float(x) for x in entry.get("box", [])[:4]]
+                if cls_id < 0 or len(box) != 4:
+                    continue
+                cleaned.append(
+                    {
+                        "cls": cls_id,
+                        "box": [min(max(float(x), 0.0), 1.0) for x in box],
+                        "score": min(max(float(entry.get("score", 0.0)), 0.0), 1.0),
+                        "obj": min(max(float(entry.get("obj", entry.get("score", 0.0))), 0.0), 1.0),
+                        "cls_conf": min(max(float(entry.get("cls_conf", entry.get("score", 0.0))), 0.0), 1.0),
+                        "stability": max(int(entry.get("stability", 1)), 1),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        cleaned.sort(key=lambda x: (x["stability"], x["score"], x["obj"], x["cls_conf"]), reverse=True)
+        kept = []
+        for entry in cleaned:
+            duplicate = False
+            for existing in kept:
+                if existing["cls"] == entry["cls"] and self._dqa0835_xywh_iou(existing["box"], entry["box"]) >= self.dqa0835_memory_merge_iou:
+                    duplicate = True
+                    break
+            if not duplicate:
+                kept.append(entry)
+            if len(kept) >= self.dqa0835_max_entries_per_image:
+                break
+        return kept
+
+    def _load_dqa0835_pseudo_memory(self) -> dict:
+        if not self.dqa0835_memory_enabled or not self.dqa0835_memory_path:
+            return {}
+        base = Path(self.dqa0835_memory_path)
+        candidates = [base]
+        candidates.extend(sorted(base.parent.glob(f"{base.stem}.rank*{base.suffix or '.json'}")))
+        memory = {}
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            for key, entries in payload.items():
+                if not isinstance(entries, list):
+                    continue
+                memory.setdefault(str(key), []).extend(entries)
+        return {key: self._dqa0835_merge_memory_entries(entries) for key, entries in memory.items()}
+
+    def _dqa0835_target_key(self, target_paths, image_idx: int) -> str:
+        try:
+            return str(target_paths[image_idx])
+        except Exception:
+            return f"rank{self.RANK}_image{image_idx}"
+
+    def _refine_dqa0835_targets_with_memory(self, unlabeled_targets, target_paths, invalid_target_shape):
+        if not self.dqa0835_memory_enabled or invalid_target_shape:
+            return unlabeled_targets
+        if not isinstance(unlabeled_targets, torch.Tensor) or unlabeled_targets.ndim != 2 or unlabeled_targets.shape[0] == 0:
+            return unlabeled_targets
+        if unlabeled_targets.shape[1] <= 6:
+            return unlabeled_targets
+
+        refined = unlabeled_targets.clone()
+        raw = unlabeled_targets.detach().cpu()
+        updates: dict[str, list[dict]] = {}
+        for row_idx, row in enumerate(raw):
+            try:
+                image_idx = int(row[0].item())
+                cls_id = int(row[1].item())
+                box = [float(x) for x in row[2:6].tolist()]
+                score = min(max(float(row[6].item()), 0.0), 1.0)
+                obj = min(max(float(row[7].item()) if raw.shape[1] > 7 else score, 0.0), 1.0)
+                cls_conf = min(max(float(row[8].item()) if raw.shape[1] > 8 else score, 0.0), 1.0)
+            except (TypeError, ValueError):
+                continue
+
+            key = self._dqa0835_target_key(target_paths, image_idx)
+            best_match = None
+            best_iou = 0.0
+            for entry in self.dqa0835_base_memory.get(key, []):
+                if int(entry.get("cls", -1)) != cls_id:
+                    continue
+                iou = self._dqa0835_xywh_iou(box, entry.get("box", []))
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match = entry
+
+            previous_stability = int(best_match.get("stability", 0)) if best_match and best_iou >= self.dqa0835_memory_iou else 0
+            new_stability = previous_stability + 1 if previous_stability > 0 else 1
+            self.dqa0835_memory_total += 1
+            if previous_stability > 0:
+                self.dqa0835_memory_matches += 1
+
+            if new_stability >= self.dqa0835_stable_rounds:
+                refined[row_idx, 6] = max(float(refined[row_idx, 6].item()), self.dqa0835_stable_score_floor)
+                if refined.shape[1] > 7:
+                    refined[row_idx, 7] = max(float(refined[row_idx, 7].item()), self.dqa0835_stable_obj_floor)
+                if refined.shape[1] > 8:
+                    refined[row_idx, 8] = max(float(refined[row_idx, 8].item()), self.dqa0835_stable_cls_floor)
+                self.dqa0835_memory_stable += 1
+            elif previous_stability > 0:
+                refined[row_idx, 6] = min(max(float(refined[row_idx, 6].item()), score), self.dqa0835_matched_score_cap)
+            else:
+                refined[row_idx, 6] = min(float(refined[row_idx, 6].item()), self.dqa0835_new_score_cap)
+
+            updates.setdefault(key, []).append(
+                {
+                    "cls": cls_id,
+                    "box": [min(max(float(x), 0.0), 1.0) for x in box],
+                    "score": score,
+                    "obj": obj,
+                    "cls_conf": cls_conf,
+                    "stability": new_stability,
+                }
+            )
+            self.dqa0835_seen_memory_keys.add(key)
+
+        for key, entries in updates.items():
+            self.dqa0835_memory[key] = self._dqa0835_merge_memory_entries(
+                list(self.dqa0835_memory.get(key, [])) + entries
+            )
+        return refined
+
+    def _write_dqa0835_pseudo_memory(self):
+        if not self.dqa0835_memory_enabled or not self.dqa0835_memory_path:
+            return
+        out_path = self._dqa0835_rank_memory_path()
+        if out_path is None:
+            return
+        payload = {
+            key: self.dqa0835_memory.get(key, [])
+            for key in sorted(self.dqa0835_seen_memory_keys)
+            if self.dqa0835_memory.get(key)
+        }
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload), encoding="utf-8")
+        LOGGER.info(
+            "Wrote DQA08_3_5 pseudo-label memory to %s "
+            "(images=%d, total=%d, matched=%d, stable=%d)",
+            out_path,
+            len(payload),
+            self.dqa0835_memory_total,
+            self.dqa0835_memory_matches,
+            self.dqa0835_memory_stable,
+        )
+
+    def _dqa_feature_quality(self, unlabeled_targets, feature_maps):
+        targets = unlabeled_targets.detach().to(self.device)
+        n = targets.shape[0]
+        default = torch.ones(n, dtype=torch.float64, device=self.device) * 0.5
+        if not isinstance(feature_maps, (list, tuple)) or len(feature_maps) == 0:
+            return default.cpu(), default.cpu()
+
+        maps = [feature.detach() for feature in feature_maps if isinstance(feature, torch.Tensor) and feature.ndim == 4]
+        if not maps:
+            return default.cpu(), default.cpu()
+
+        boxes = targets[:, 2:6].to(torch.float32).clamp(0.0, 1.0)
+        x_center, y_center, width, height = boxes.unbind(dim=1)
+        size = torch.maximum(width, height)
+        level_ids = torch.zeros(n, dtype=torch.long, device=self.device)
+        if len(maps) > 1:
+            level_ids = torch.where(size > 0.14, torch.ones_like(level_ids), level_ids)
+        if len(maps) > 2:
+            level_ids = torch.where(size > 0.32, torch.ones_like(level_ids) * 2, level_ids)
+        level_ids = level_ids.clamp(0, len(maps) - 1)
+
+        energy = torch.zeros(n, dtype=torch.float32, device=self.device)
+        contrast = torch.zeros(n, dtype=torch.float32, device=self.device)
+        image_ids = targets[:, 0].to(torch.long)
+
+        for level_idx, fmap in enumerate(maps):
+            mask = level_ids == level_idx
+            if not mask.any():
+                continue
+            fmap = fmap.float()
+            b, _, h, w = fmap.shape
+            idx = torch.nonzero(mask, as_tuple=False).flatten()
+            img_idx = image_ids[idx].clamp(0, b - 1)
+            xs = (x_center[idx] * (w - 1)).round().to(torch.long).clamp(0, w - 1)
+            ys = (y_center[idx] * (h - 1)).round().to(torch.long).clamp(0, h - 1)
+
+            vectors = fmap[img_idx, :, ys, xs]
+            energy[idx] = vectors.pow(2).mean(dim=1).sqrt()
+
+            activation = fmap.abs().mean(dim=1, keepdim=True)
+            local = torch.nn.functional.avg_pool2d(activation, kernel_size=3, stride=1, padding=1)
+            center = activation[img_idx, 0, ys, xs]
+            neighborhood = local[img_idx, 0, ys, xs].clamp_min(1e-6)
+            contrast[idx] = center / neighborhood
+
+        def robust_normalize(values):
+            if values.numel() <= 1:
+                return torch.ones_like(values) * 0.5
+            low = torch.quantile(values, 0.10)
+            high = torch.quantile(values, 0.90)
+            denom = (high - low).clamp_min(1e-6)
+            return ((values - low) / denom).clamp(0.0, 1.0)
+
+        feature_quality = robust_normalize(energy)
+        feature_contrast = robust_normalize(contrast)
+        return feature_quality.to(torch.float64).cpu(), feature_contrast.to(torch.float64).cpu()
+
+    @staticmethod
+    def _dqa0836_label_path_from_image(image_path: Path) -> Path:
+        parts = list(image_path.parts)
+        if "images" in parts:
+            parts[parts.index("images")] = "labels"
+            return Path(*parts).with_suffix(".txt")
+        return image_path.with_suffix(".txt")
+
+    @staticmethod
+    def _dqa0836_xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
+        x, y, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+        return np.stack([x - w / 2.0, y - h / 2.0, x + w / 2.0, y + h / 2.0], axis=1)
+
+    @staticmethod
+    def _dqa0836_iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        if len(a) == 0 or len(b) == 0:
+            return np.zeros((len(a), len(b)), dtype=np.float64)
+        lt = np.maximum(a[:, None, :2], b[None, :, :2])
+        rb = np.minimum(a[:, None, 2:], b[None, :, 2:])
+        wh = np.clip(rb - lt, 0.0, None)
+        inter = wh[:, :, 0] * wh[:, :, 1]
+        area_a = np.clip(a[:, 2] - a[:, 0], 0.0, None) * np.clip(a[:, 3] - a[:, 1], 0.0, None)
+        area_b = np.clip(b[:, 2] - b[:, 0], 0.0, None) * np.clip(b[:, 3] - b[:, 1], 0.0, None)
+        return inter / np.clip(area_a[:, None] + area_b[None, :] - inter, 1e-12, None)
+
+    def _dqa0836_load_source_prior(self, bundle: dict) -> np.ndarray:
+        if self.dqa0836_source_gt_prior is not None:
+            return self.dqa0836_source_gt_prior
+
+        counts = np.zeros(self.nc, dtype=np.float64)
+        list_path = Path(str(bundle.get("source_train_list", "")))
+        if list_path.exists():
+            for raw in list_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                label_path = self._dqa0836_label_path_from_image(Path(raw))
+                if not label_path.exists():
+                    continue
+                for line in label_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    parts = line.strip().split()
+                    if not parts:
+                        continue
+                    try:
+                        cls_id = int(float(parts[0]))
+                    except ValueError:
+                        continue
+                    if 0 <= cls_id < self.nc:
+                        counts[cls_id] += 1.0
+
+        self.dqa0836_source_gt_prior = (counts + 1.0) / (counts.sum() + self.nc)
+        return self.dqa0836_source_gt_prior
+
+    def _dqa0836_load_scolq_bundle(self):
+        if not self.dqa0836_scolq_enabled:
+            return None
+        if self.dqa0836_scolq_bundle is not None:
+            return self.dqa0836_scolq_bundle
+        if not self.dqa0836_scolq_model_path:
+            LOGGER.warning("DQA08_3_6 SCoLQ is enabled but DQA0836_SCOLQ_MODEL is empty; using teacher confidence.")
+            self.dqa0836_scolq_enabled = False
+            return None
+
+        model_path = Path(self.dqa0836_scolq_model_path)
+        if not model_path.exists():
+            LOGGER.warning("DQA08_3_6 SCoLQ model is missing at %s; using teacher confidence.", model_path)
+            self.dqa0836_scolq_enabled = False
+            return None
+
+        try:
+            import joblib
+        except Exception as exc:
+            LOGGER.warning("Could not import joblib for SCoLQ (%s); using teacher confidence.", exc)
+            self.dqa0836_scolq_enabled = False
+            return None
+
+        self.dqa0836_scolq_bundle = joblib.load(model_path)
+        self.dqa0836_scolq_features = list(self.dqa0836_scolq_bundle.get("features", []))
+        if not self.dqa0836_scolq_features:
+            LOGGER.warning("SCoLQ bundle at %s has no feature list; using teacher confidence.", model_path)
+            self.dqa0836_scolq_enabled = False
+            return None
+        self._dqa0836_load_source_prior(self.dqa0836_scolq_bundle)
+        LOGGER.info(
+            "Loaded DQA08_3_6 SCoLQ bundle from %s with %d features.",
+            model_path,
+            len(self.dqa0836_scolq_features),
+        )
+        return self.dqa0836_scolq_bundle
+
+    def _dqa0836_targets_to_feature_frame(self, unlabeled_targets):
+        import pandas as pd
+
+        raw = unlabeled_targets.detach().cpu().numpy()
+        n = raw.shape[0]
+        image_ids = raw[:, 0].astype(np.int64)
+        cls = raw[:, 1].astype(np.int64).clip(0, self.nc - 1)
+        x = raw[:, 2].astype(np.float64)
+        y = raw[:, 3].astype(np.float64)
+        w = raw[:, 4].astype(np.float64)
+        h = raw[:, 5].astype(np.float64)
+        conf = np.clip(raw[:, 6].astype(np.float64), 1e-6, 1.0 - 1e-6)
+
+        image_pred_count = np.ones(n, dtype=np.float64)
+        class_pred_count = np.ones(n, dtype=np.float64)
+        rank_conf = np.ones(n, dtype=np.float64)
+        max_iou_same = np.zeros(n, dtype=np.float64)
+        max_iou_any = np.zeros(n, dtype=np.float64)
+        near_same_50 = np.zeros(n, dtype=np.float64)
+        near_any_50 = np.zeros(n, dtype=np.float64)
+
+        boxes = self._dqa0836_xywh_to_xyxy(np.stack([x, y, w, h], axis=1))
+        for image_id in np.unique(image_ids):
+            idx = np.where(image_ids == image_id)[0]
+            image_pred_count[idx] = float(len(idx))
+            order = idx[np.argsort(-conf[idx], kind="mergesort")]
+            rank_conf[order] = np.arange(1, len(order) + 1, dtype=np.float64)
+            for cls_id in np.unique(cls[idx]):
+                class_pred_count[idx[cls[idx] == cls_id]] = float(np.sum(cls[idx] == cls_id))
+            ious = self._dqa0836_iou_matrix(boxes[idx], boxes[idx])
+            if len(idx):
+                np.fill_diagonal(ious, 0.0)
+                same = cls[idx][:, None] == cls[idx][None, :]
+                max_iou_any[idx] = ious.max(axis=1)
+                max_iou_same[idx] = (ious * same).max(axis=1)
+                near_any_50[idx] = (ious >= 0.5).sum(axis=1)
+                near_same_50[idx] = ((ious >= 0.5) & same).sum(axis=1)
+
+        source_prior = self.dqa0836_source_gt_prior
+        if source_prior is None:
+            source_prior = np.ones(self.nc, dtype=np.float64) / max(self.nc, 1)
+        batch_counts = np.bincount(cls, minlength=self.nc).astype(np.float64)
+        batch_prior = batch_counts / max(float(n), 1.0)
+        area = w * h
+        aspect = w / np.clip(h, 1e-6, None)
+
+        data = {
+            "cls": cls,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "conf": conf,
+            "image_pred_count": image_pred_count,
+            "class_pred_count": class_pred_count,
+            "rank_conf": rank_conf,
+            "rank_conf_norm": rank_conf / np.maximum(image_pred_count, 1.0),
+            "max_iou_same_pred": max_iou_same,
+            "max_iou_any_pred": max_iou_any,
+            "near_same_count_50": near_same_50,
+            "near_any_count_50": near_any_50,
+            "area": area,
+            "log_area": np.log1p(area),
+            "aspect": aspect,
+            "log_aspect": np.log(np.clip(aspect, 1e-6, None)),
+            "edge_dist": np.minimum.reduce([x, y, 1.0 - x, 1.0 - y]),
+            "conf_logit": np.log(conf / np.clip(1.0 - conf, 1e-6, None)),
+            "source_gt_class_prior": source_prior[cls],
+            "source_gt_class_log_prior": np.log(source_prior[cls]),
+            "split_pred_class_prior": batch_prior[cls],
+            "pred_gt_prior_ratio": batch_prior[cls] / np.clip(source_prior[cls], 1e-9, None),
+            "aug640_iou": np.nan,
+            "aug640_conf": np.nan,
+            "aug640_matched": 0.0,
+            "plain512_iou": np.nan,
+            "plain512_conf": np.nan,
+            "plain512_matched": 0.0,
+            "plain768_iou": np.nan,
+            "plain768_conf": np.nan,
+            "plain768_matched": 0.0,
+            "agreement_iou_mean": np.nan,
+            "agreement_match_count": 0.0,
+        }
+        for feature in self.dqa0836_scolq_features:
+            data.setdefault(feature, 0.0)
+        return pd.DataFrame(data)[self.dqa0836_scolq_features]
+
+    def _apply_dqa0836_scolq(self, unlabeled_targets, invalid_target_shape):
+        self.dqa0838_last_raw_rscolq_scores = None
+        if not self.dqa0836_scolq_enabled or invalid_target_shape:
+            return unlabeled_targets
+        if not isinstance(unlabeled_targets, torch.Tensor):
+            unlabeled_targets = torch.as_tensor(unlabeled_targets)
+        if unlabeled_targets.ndim != 2 or unlabeled_targets.shape[0] == 0 or unlabeled_targets.shape[1] <= 6:
+            return unlabeled_targets
+
+        bundle = self._dqa0836_load_scolq_bundle()
+        if bundle is None:
+            return unlabeled_targets
+
+        try:
+            frame = self._dqa0836_targets_to_feature_frame(unlabeled_targets)
+            scores = bundle["pipeline"].predict_proba(frame)[:, 1]
+        except Exception as exc:
+            LOGGER.warning("DQA08_3_6 SCoLQ scoring failed (%s); using teacher confidence for this batch.", exc)
+            return unlabeled_targets
+
+        scores = np.clip(scores.astype(np.float64), 0.0, 1.0)
+        if self.dqa0836_scolq_score_power != 1.0:
+            scores = np.power(scores, self.dqa0836_scolq_score_power)
+        raw_scores = scores.copy()
+        if self.dqa0837_rscolq_enabled:
+            scores = scores * max(self.dqa0837_rscolq_global_multiplier, 0.0)
+            class_multipliers = self._dqa0837_rscolq_class_multiplier_array()
+            if class_multipliers is not None:
+                cls_ids = unlabeled_targets[:, 1].detach().cpu().numpy().astype(np.int64).clip(0, self.nc - 1)
+                scores = scores * class_multipliers[cls_ids]
+            scores = np.clip(scores, 0.0, 1.0)
+        self.dqa0838_last_raw_rscolq_scores = torch.as_tensor(raw_scores, dtype=torch.float64)
+        refined = unlabeled_targets.clone()
+        refined[:, 6] = torch.as_tensor(scores, dtype=refined.dtype, device=refined.device)
+        return refined
+
+    def _dqa0837_rscolq_class_multiplier_array(self):
+        if not self.dqa0837_rscolq_class_multipliers:
+            return None
+        try:
+            values = json.loads(self.dqa0837_rscolq_class_multipliers)
+        except Exception:
+            values = [part.strip() for part in self.dqa0837_rscolq_class_multipliers.split(",") if part.strip()]
+        if not isinstance(values, list) or len(values) != self.nc:
+            LOGGER.warning(
+                "Ignoring DQA08_3_7 R-SCoLQ class multipliers with invalid length: %s",
+                self.dqa0837_rscolq_class_multipliers,
+            )
+            return None
+        return np.asarray([max(float(value), 0.0) for value in values], dtype=np.float64)
+
+    def _update_dqa_pseudo_stats(self, unlabeled_targets, invalid_target_shape, feature_maps=None):
         if not self.dqa_track_pseudo_stats or invalid_target_shape:
             return
         if not isinstance(unlabeled_targets, torch.Tensor):
@@ -110,17 +640,120 @@ class SSODTrainer(Trainer):
         if not valid.any():
             return
 
-        class_ids = class_ids[valid]
+        targets = targets[valid]
+        class_ids = targets[:, 1].to(torch.int64)
         if targets.shape[1] > 6:
-            confidences = targets[:, 6].to(torch.float64)[valid].clamp(0.0, 1.0)
+            confidences = targets[:, 6].to(torch.float64).clamp(0.0, 1.0)
         else:
             confidences = torch.ones_like(class_ids, dtype=torch.float64)
+        raw_rscolq_confidences = None
+        if self.dqa0838_rscolq_raw_stats and self.dqa0838_last_raw_rscolq_scores is not None:
+            raw_scores = self.dqa0838_last_raw_rscolq_scores
+            if raw_scores.numel() == valid.numel():
+                raw_rscolq_confidences = raw_scores[valid].to(torch.float64).clamp(0.0, 1.0)
+        if targets.shape[1] > 7:
+            objectness = targets[:, 7].to(torch.float64).clamp(0.0, 1.0)
+        else:
+            objectness = confidences.clone()
+        if targets.shape[1] > 8:
+            class_confidences = targets[:, 8].to(torch.float64).clamp(0.0, 1.0)
+        else:
+            class_confidences = confidences.clone()
+
+        boxes = targets[:, 2:6].to(torch.float64)
+        finite_boxes = torch.isfinite(boxes).all(dim=1)
+        x_center, y_center, width, height = boxes.unbind(dim=1)
+        x1 = x_center - width / 2.0
+        y1 = y_center - height / 2.0
+        x2 = x_center + width / 2.0
+        y2 = y_center + height / 2.0
+        overflow = (
+            torch.relu(-x1)
+            + torch.relu(-y1)
+            + torch.relu(x2 - 1.0)
+            + torch.relu(y2 - 1.0)
+        )
+        positive_area = (width > 0.0) & (height > 0.0)
+        localization = (1.0 - overflow.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+        localization = torch.where(finite_boxes & positive_area, localization, torch.zeros_like(localization))
+        quality = (
+            0.50 * confidences
+            + 0.20 * objectness
+            + 0.20 * class_confidences
+            + 0.10 * localization
+        ).clamp(0.0, 1.0)
+        feature_quality = torch.ones_like(confidences, dtype=torch.float64) * 0.5
+        feature_contrast = torch.ones_like(confidences, dtype=torch.float64) * 0.5
+        if self.dqa_quality_mode in {
+            "feature_saliency",
+            "feature_contrast",
+            "feature_balanced",
+            "feature_conservative",
+            "feature_no_conf",
+        }:
+            feature_quality, feature_contrast = self._dqa_feature_quality(targets, feature_maps)
+            feature_quality = feature_quality.to(torch.float64).clamp(0.0, 1.0)
+            feature_contrast = feature_contrast.to(torch.float64).clamp(0.0, 1.0)
+        feature_balanced = (
+            0.35 * feature_quality
+            + 0.25 * feature_contrast
+            + 0.20 * objectness
+            + 0.10 * class_confidences
+            + 0.10 * localization
+        ).clamp(0.0, 1.0)
+
+        if self.dqa_quality_mode == "feature_saliency":
+            quality = (
+                0.65 * feature_quality
+                + 0.15 * objectness
+                + 0.10 * class_confidences
+                + 0.10 * localization
+            ).clamp(0.0, 1.0)
+        elif self.dqa_quality_mode == "feature_contrast":
+            quality = (
+                0.65 * feature_contrast
+                + 0.15 * feature_quality
+                + 0.10 * objectness
+                + 0.10 * localization
+            ).clamp(0.0, 1.0)
+        elif self.dqa_quality_mode == "feature_balanced":
+            quality = feature_balanced
+        elif self.dqa_quality_mode == "feature_conservative":
+            quality = torch.minimum(quality, feature_balanced)
+        elif self.dqa_quality_mode == "feature_no_conf":
+            quality = (
+                0.50 * feature_quality
+                + 0.30 * feature_contrast
+                + 0.20 * localization
+            ).clamp(0.0, 1.0)
+        elif self.dqa_quality_mode in {"scolq", "rscolq", "source_calibrated_localization"}:
+            quality = confidences.clamp(0.0, 1.0)
+        elif self.dqa_quality_mode in {"rscolq_raw", "round_stable_raw"}:
+            quality = (raw_rscolq_confidences if raw_rscolq_confidences is not None else confidences).clamp(0.0, 1.0)
 
         counts = torch.bincount(class_ids, minlength=self.nc).to(torch.float64)
         confidence_sums = torch.zeros(self.nc, dtype=torch.float64)
+        objectness_sums = torch.zeros(self.nc, dtype=torch.float64)
+        class_confidence_sums = torch.zeros(self.nc, dtype=torch.float64)
+        localization_sums = torch.zeros(self.nc, dtype=torch.float64)
+        feature_quality_sums = torch.zeros(self.nc, dtype=torch.float64)
+        feature_contrast_sums = torch.zeros(self.nc, dtype=torch.float64)
+        quality_sums = torch.zeros(self.nc, dtype=torch.float64)
         confidence_sums.index_add_(0, class_ids, confidences)
+        objectness_sums.index_add_(0, class_ids, objectness)
+        class_confidence_sums.index_add_(0, class_ids, class_confidences)
+        localization_sums.index_add_(0, class_ids, localization)
+        feature_quality_sums.index_add_(0, class_ids, feature_quality)
+        feature_contrast_sums.index_add_(0, class_ids, feature_contrast)
+        quality_sums.index_add_(0, class_ids, quality)
         self.dqa_pseudo_counts += counts
         self.dqa_pseudo_confidence_sums += confidence_sums
+        self.dqa_pseudo_objectness_sums += objectness_sums
+        self.dqa_pseudo_class_confidence_sums += class_confidence_sums
+        self.dqa_pseudo_localization_sums += localization_sums
+        self.dqa_pseudo_feature_quality_sums += feature_quality_sums
+        self.dqa_pseudo_feature_contrast_sums += feature_contrast_sums
+        self.dqa_pseudo_quality_sums += quality_sums
 
     def _write_dqa_pseudo_stats(self):
         if not self.dqa_track_pseudo_stats:
@@ -128,19 +761,67 @@ class SSODTrainer(Trainer):
 
         counts = self.dqa_pseudo_counts.clone()
         confidence_sums = self.dqa_pseudo_confidence_sums.clone()
+        objectness_sums = self.dqa_pseudo_objectness_sums.clone()
+        class_confidence_sums = self.dqa_pseudo_class_confidence_sums.clone()
+        localization_sums = self.dqa_pseudo_localization_sums.clone()
+        feature_quality_sums = self.dqa_pseudo_feature_quality_sums.clone()
+        feature_contrast_sums = self.dqa_pseudo_feature_contrast_sums.clone()
+        quality_sums = self.dqa_pseudo_quality_sums.clone()
         if self.RANK != -1 and dist.is_available() and dist.is_initialized():
             counts_device = counts.to(self.device)
             confidence_sums_device = confidence_sums.to(self.device)
+            objectness_sums_device = objectness_sums.to(self.device)
+            class_confidence_sums_device = class_confidence_sums.to(self.device)
+            localization_sums_device = localization_sums.to(self.device)
+            feature_quality_sums_device = feature_quality_sums.to(self.device)
+            feature_contrast_sums_device = feature_contrast_sums.to(self.device)
+            quality_sums_device = quality_sums.to(self.device)
             dist.all_reduce(counts_device, op=dist.ReduceOp.SUM)
             dist.all_reduce(confidence_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(objectness_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(class_confidence_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(localization_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(feature_quality_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(feature_contrast_sums_device, op=dist.ReduceOp.SUM)
+            dist.all_reduce(quality_sums_device, op=dist.ReduceOp.SUM)
             counts = counts_device.cpu()
             confidence_sums = confidence_sums_device.cpu()
+            objectness_sums = objectness_sums_device.cpu()
+            class_confidence_sums = class_confidence_sums_device.cpu()
+            localization_sums = localization_sums_device.cpu()
+            feature_quality_sums = feature_quality_sums_device.cpu()
+            feature_contrast_sums = feature_contrast_sums_device.cpu()
+            quality_sums = quality_sums_device.cpu()
 
         if self.RANK not in [-1, 0]:
             return
 
         mean_confidences = [
             (confidence_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_objectness = [
+            (objectness_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_class_confidences = [
+            (class_confidence_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_localization_qualities = [
+            (localization_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_feature_qualities = [
+            (feature_quality_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_feature_contrasts = [
+            (feature_contrast_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
+            for idx in range(self.nc)
+        ]
+        mean_quality_scores = [
+            (quality_sums[idx] / counts[idx]).item() if counts[idx] > 0 else 0.0
             for idx in range(self.nc)
         ]
         payload = {
@@ -150,7 +831,20 @@ class SSODTrainer(Trainer):
             "source_run": str(self.save_dir),
             "counts": [float(value) for value in counts.tolist()],
             "confidence_sums": [float(value) for value in confidence_sums.tolist()],
+            "objectness_sums": [float(value) for value in objectness_sums.tolist()],
+            "class_confidence_sums": [float(value) for value in class_confidence_sums.tolist()],
+            "localization_sums": [float(value) for value in localization_sums.tolist()],
+            "feature_quality_sums": [float(value) for value in feature_quality_sums.tolist()],
+            "feature_contrast_sums": [float(value) for value in feature_contrast_sums.tolist()],
+            "quality_sums": [float(value) for value in quality_sums.tolist()],
             "mean_confidences": mean_confidences,
+            "mean_objectness": mean_objectness,
+            "mean_class_confidences": mean_class_confidences,
+            "mean_localization_qualities": mean_localization_qualities,
+            "mean_feature_qualities": mean_feature_qualities,
+            "mean_feature_contrasts": mean_feature_contrasts,
+            "mean_quality_scores": mean_quality_scores,
+            "quality_mode": self.dqa_quality_mode,
         }
         out_path = Path(self.dqa_pseudo_stats_out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -625,30 +1319,38 @@ class SSODTrainer(Trainer):
     def after_train(self, callbacks, val):
         results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, clss)
         self._write_dqa_pseudo_stats()
+        self._write_dqa0835_pseudo_memory()
+        skip_best_val = os.getenv('ET_SKIP_AFTER_TRAIN_BEST_VAL', '').strip().lower() in {'1', 'true', 'yes', 'on'}
         if self.RANK in [-1, 0]:
             for f in self.last, self.best:
                 if f.exists():
                     strip_optimizer(f)  # strip optimizers
                     if f is self.best:
-                        LOGGER.info(f'\nValidating {f}...')
-                        # val_ssod = self.cfg.SSOD.train_domain
-                        results, _, _, _ = val.run(self.data_dict,
-                                            batch_size=self.batch_size // self.WORLD_SIZE * 2,
-                                            imgsz=self.imgsz,
-                                            model=attempt_load(f, self.device).half(),
-                                            conf_thres=self.cfg.val_conf_thres, 
-                                            iou_thres=0.65,  # best pycocotools results at 0.65
-                                            single_cls=self.single_cls,
-                                            dataloader=self.val_loader,
-                                            save_dir=self.save_dir,
-                                            save_json=False,
-                                            verbose=True,
-                                            plots=True,
-                                            callbacks=callbacks,
-                                            compute_loss=self.compute_loss,
-                                            num_points=self.cfg.Dataset.np,
-                                            val_ssod=self.cfg.SSOD.train_domain,
-                                            val_kp=self.cfg.Dataset.val_kp)  # val best model with plots
+                        if skip_best_val:
+                            LOGGER.info(f'\nSkipping final best-checkpoint validation for {f} because ET_SKIP_AFTER_TRAIN_BEST_VAL is enabled.')
+                        else:
+                            LOGGER.info(f'\nValidating {f}...')
+                            try:
+                                # val_ssod = self.cfg.SSOD.train_domain
+                                results, _, _, _ = val.run(self.data_dict,
+                                                    batch_size=self.batch_size // self.WORLD_SIZE * 2,
+                                                    imgsz=self.imgsz,
+                                                    model=attempt_load(f, self.device).half(),
+                                                    conf_thres=self.cfg.val_conf_thres,
+                                                    iou_thres=0.65,  # best pycocotools results at 0.65
+                                                    single_cls=self.single_cls,
+                                                    dataloader=self.val_loader,
+                                                    save_dir=self.save_dir,
+                                                    save_json=False,
+                                                    verbose=True,
+                                                    plots=True,
+                                                    callbacks=callbacks,
+                                                    compute_loss=self.compute_loss,
+                                                    num_points=self.cfg.Dataset.np,
+                                                    val_ssod=self.cfg.SSOD.train_domain,
+                                                    val_kp=self.cfg.Dataset.val_kp)  # val best model with plots
+                            except Exception as exc:
+                                LOGGER.warning(f'Final best-checkpoint validation failed for {f}: {exc}')
 
             callbacks.run('on_train_end', self.last, self.best, self.plots, self.epoch)
             LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")
@@ -675,7 +1377,7 @@ class SSODTrainer(Trainer):
                 raise NotImplementedError
             return sup_pred, sup_feature, un_sup_pred, un_sup_feature
     
-    def train_instance(self, imgs, targets, paths, unlabeled_imgs, unlabeled_imgs_ori, unlabeled_gt, unlabeled_M, ni, pbar, callbacks):
+    def train_instance(self, imgs, targets, paths, unlabeled_imgs, unlabeled_imgs_ori, unlabeled_gt, unlabeled_paths, unlabeled_M, ni, pbar, callbacks):
         n_img, _, _, _ = imgs.shape
         n_pse_img, _,_,_ = unlabeled_imgs.shape
         invalid_target_shape = True
@@ -711,7 +1413,12 @@ class SSODTrainer(Trainer):
         else:    
             raise NotImplementedError
 
-        self._update_dqa_pseudo_stats(unlabeled_targets, invalid_target_shape)
+        unlabeled_targets = self._refine_dqa0835_targets_with_memory(
+            unlabeled_targets,
+            unlabeled_paths,
+            invalid_target_shape,
+        )
+        unlabeled_targets = self._apply_dqa0836_scolq(unlabeled_targets, invalid_target_shape)
 
         with amp.autocast(enabled=self.cuda):
             if self.cfg.FedSTO.unlabeled_only_client:
@@ -731,6 +1438,7 @@ class SSODTrainer(Trainer):
                     sup_loss = sup_loss + d_loss * self.da_loss_weights + t_loss * self.da_loss_weights
                 else:
                     sup_loss = sup_loss + d_loss * 0 + t_loss * 0
+            self._update_dqa_pseudo_stats(unlabeled_targets, invalid_target_shape, un_sup_feature)
             # total_t2 = time_sync()
             if self.RANK != -1:
                 sup_loss *= self.WORLD_SIZE  # gradient averaged between devices in DDP mode
@@ -791,7 +1499,7 @@ class SSODTrainer(Trainer):
                 imgs = imgs.to(self.device, non_blocking=True).float() / 255.0 
                 target_imgs = target_imgs.to(self.device, non_blocking=True).float() / 255.0 
                 target_imgs_ori = target_imgs_ori.to(self.device, non_blocking=True).float() / 255.0 
-                self.train_instance(imgs, targets, paths, target_imgs, target_imgs_ori, target_gt, target_M, ni, pbar, callbacks)
+                self.train_instance(imgs, targets, paths, target_imgs, target_imgs_ori, target_gt, target_paths, target_M, ni, pbar, callbacks)
         else:
             pbar = enumerate(self.train_loader)
             if self.RANK in [-1, 0]:
@@ -803,7 +1511,7 @@ class SSODTrainer(Trainer):
                 imgs = imgs.to(self.device, non_blocking=True).float() / 255.0 
                 target_imgs = target_imgs.to(self.device, non_blocking=True).float() / 255.0 
                 target_imgs_ori = target_imgs_ori.to(self.device, non_blocking=True).float() / 255.0 
-                self.train_instance(imgs, targets, paths, target_imgs, target_imgs_ori, target_gt, target_M, ni, pbar, callbacks)
+                self.train_instance(imgs, targets, paths, target_imgs, target_imgs_ori, target_gt, target_paths, target_M, ni, pbar, callbacks)
             
         # end batch ------------------------------------------------------------------------------------------------
         

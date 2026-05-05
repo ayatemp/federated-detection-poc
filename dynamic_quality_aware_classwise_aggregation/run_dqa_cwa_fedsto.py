@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the FedSTO reproduction with DQA-CWA aggregation in phase 2.
+"""Run the corrected DQA-CWA protocol on the FedSTO/EfficientTeacher setup.
 
 The script mirrors navigating_data_heterogeneity/run_fedsto_efficientteacher_exact.py
 but writes generated configs, runs, checkpoints, and aggregation state under this
@@ -15,12 +15,15 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 
 from dqa_cwa_aggregation import (
     AggregationConfig,
+    aggregate_fedavg_checkpoints,
     aggregate_checkpoints,
     compute_reliability,
+    load_state,
     load_round_stats,
     save_state,
 )
@@ -30,6 +33,7 @@ RESEARCH_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = RESEARCH_ROOT.parent
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DEFAULT_DQA_WORK_ROOT = RESEARCH_ROOT / "efficientteacher_dqa_cwa"
+DQA_PROTOCOL_VERSION = "dqa_cwa_alg1_phase2_guarded_quality_bnlocal_v2"
 
 
 def _prepare_fedsto_modules(work_root: Path):
@@ -70,6 +74,7 @@ def _dqa_config(args: argparse.Namespace) -> AggregationConfig:
         stability_lambda=args.stability_lambda,
         min_effective_count=args.min_effective_count,
         server_anchor=args.server_anchor,
+        localize_bn=args.localize_bn,
     )
 
 
@@ -110,6 +115,9 @@ def cleanup_round_intermediates(setup, fedsto, phase: int, round_idx: int) -> tu
         removed += count
         freed += size
     count, size = _remove_file(fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt")
+    removed += count
+    freed += size
+    count, size = _remove_file(fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_dqa_client_aggregate.pt")
     removed += count
     freed += size
     return removed, freed
@@ -202,17 +210,71 @@ def run_train(
 
     if args.stream_train_output:
         try:
-            subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, check=True)
+            if args.log_file is None:
+                subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, check=True)
+            else:
+                args.log_file.parent.mkdir(parents=True, exist_ok=True)
+                with args.log_file.open("a", encoding="utf-8", buffering=1) as log:
+                    log.write("\n" + "=" * 100 + "\n")
+                    log.write(" ".join(cmd) + "\n")
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=fedsto.setup.ET_ROOT,
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                    )
+                    assert process.stdout is not None
+                    for line in process.stdout:
+                        print(line, end="")
+                        log.write(line)
+                    return_code = process.wait()
+                    if return_code != 0:
+                        raise subprocess.CalledProcessError(return_code, cmd)
         except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Training failed for {config}") from exc
+            raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
     else:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        recent_output = deque(maxlen=120)
         with args.log_file.open("a", encoding="utf-8") as log:
             log.write("\n" + "=" * 100 + "\n")
             log.write(" ".join(cmd) + "\n")
+            log.flush()
             try:
-                subprocess.run(cmd, cwd=fedsto.setup.ET_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=fedsto.setup.ET_ROOT,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                assert process.stdout is not None
+                for line in process.stdout:
+                    log.write(line)
+                    recent_output.append(line.rstrip("\n"))
+                return_code = process.wait()
+                if return_code != 0:
+                    raise subprocess.CalledProcessError(return_code, cmd)
             except subprocess.CalledProcessError as exc:
+                print(f"Training subprocess failed with exit code {exc.returncode}: {' '.join(cmd)}")
+                log.flush()
+                if args.log_file.exists():
+                    print(f"Last 120 lines from {args.log_file}:")
+                    try:
+                        with args.log_file.open(encoding="utf-8", errors="replace") as failed_log:
+                            for line in deque(failed_log, maxlen=120):
+                                print(line.rstrip())
+                    except OSError as log_exc:
+                        print(f"Could not read failed training log: {log_exc}")
+                else:
+                    print(f"Training log path disappeared before it could be reread: {args.log_file}")
+                    print("Last 120 captured training-output lines:")
+                    for line in recent_output:
+                        print(line.rstrip())
                 raise RuntimeError(f"Training failed for {config}; see {args.log_file}") from exc
 
         print(f"Training output appended to {args.log_file}")
@@ -246,6 +308,93 @@ def build_round_stats_from_clients(args: argparse.Namespace, phase: int, round_i
     return round_stats
 
 
+def summarize_round_stats(stats) -> dict:
+    total_count = float(sum(sum(max(float(value), 0.0) for value in item.counts) for item in stats))
+    per_class = [
+        float(sum(max(float(item.counts[class_idx]), 0.0) for item in stats))
+        for class_idx in range(len(stats[0].counts))
+    ]
+    weighted_quality_sum = 0.0
+    for item in stats:
+        for count, quality in zip(item.counts, item.mean_quality_scores):
+            weighted_quality_sum += max(float(count), 0.0) * min(max(float(quality), 0.0), 1.0)
+    mean_quality = weighted_quality_sum / total_count if total_count > 0 else 0.0
+    return {
+        "total_count": total_count,
+        "active_classes": int(sum(1 for value in per_class if value > 0)),
+        "per_class_counts": per_class,
+        "mean_quality": mean_quality,
+    }
+
+
+def should_skip_dqa_round(stats, state: dict, args: argparse.Namespace) -> tuple[bool, dict, str]:
+    summary = summarize_round_stats(stats)
+    if not args.enable_dqa_guard:
+        return False, summary, ""
+
+    total_count = float(summary["total_count"])
+    if total_count <= args.dqa_min_round_pseudo_count:
+        return True, summary, (
+            f"round pseudo-label count {total_count:.0f} <= guard minimum "
+            f"{args.dqa_min_round_pseudo_count:.0f}"
+        )
+
+    guard = state.setdefault("round_guard", {})
+    previous_ema = guard.get("total_count_ema")
+    if previous_ema is not None and previous_ema > 0:
+        if args.dqa_drop_ratio_threshold > 0 and total_count < previous_ema * args.dqa_drop_ratio_threshold:
+            return True, summary, (
+                f"round pseudo-label count dropped to {total_count:.0f}, below "
+                f"{args.dqa_drop_ratio_threshold:.2f}x previous EMA {previous_ema:.0f}"
+            )
+        if args.dqa_spike_ratio_threshold > 0 and total_count > previous_ema * args.dqa_spike_ratio_threshold:
+            return True, summary, (
+                f"round pseudo-label count spiked to {total_count:.0f}, above "
+                f"{args.dqa_spike_ratio_threshold:.2f}x previous EMA {previous_ema:.0f}"
+            )
+
+    return False, summary, ""
+
+
+def record_dqa_guard_state(
+    state: dict,
+    *,
+    phase: int,
+    round_idx: int,
+    summary: dict,
+    used_dqa: bool,
+    reason: str,
+    args: argparse.Namespace,
+) -> dict:
+    guard = state.setdefault("round_guard", {})
+    total_count = float(summary["total_count"])
+    previous_ema = guard.get("total_count_ema")
+    if used_dqa:
+        if previous_ema is None:
+            guard["total_count_ema"] = total_count
+        else:
+            guard["total_count_ema"] = (
+                args.dqa_guard_count_ema * float(previous_ema)
+                + (1.0 - args.dqa_guard_count_ema) * total_count
+            )
+    guard["last_total_count"] = total_count
+    guard["last_used_dqa"] = bool(used_dqa)
+    guard["last_reason"] = reason
+    guard.setdefault("history", []).append(
+        {
+            "phase": phase,
+            "round": round_idx,
+            "total_count": total_count,
+            "active_classes": int(summary["active_classes"]),
+            "mean_quality": float(summary["mean_quality"]),
+            "used_dqa": bool(used_dqa),
+            "reason": reason,
+        }
+    )
+    guard["history"] = guard["history"][-200:]
+    return state
+
+
 def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace, dqa_state: Path) -> None:
     dqa_entries = []
     for entry in history:
@@ -270,6 +419,19 @@ def rebuild_dqa_state_from_history(history: list[dict], args: argparse.Namespace
                 f"Cannot rebuild missing DQA-CWA EMA state because stats are missing: {stats_file}"
             )
         stats = load_round_stats(stats_file, args.num_classes)
+        skip_dqa, summary, reason = should_skip_dqa_round(stats, state, args)
+        state = record_dqa_guard_state(
+            state,
+            phase=phase,
+            round_idx=round_idx,
+            summary=summary,
+            used_dqa=not skip_dqa,
+            reason=reason,
+            args=args,
+        )
+        if skip_dqa:
+            rebuilt += 1
+            continue
         state, alpha, source_ids, active = compute_reliability(stats, state, _dqa_config(args))
         state["last_sources"] = source_ids
         state["last_alpha"] = alpha.tolist()
@@ -295,6 +457,7 @@ def run_protocol(args: argparse.Namespace) -> None:
         args.log_file = args.workspace_root / "dqa_cwa_latest.log"
     if not args.dry_run and not args.append_train_log and args.log_file.exists():
         args.log_file.unlink()
+    args.gpus = fedsto.resolve_gpus(args.gpus)
     config_device = "" if args.gpus > 1 else args.device
     ensure_disk_space(args.workspace_root, args.min_free_gib)
 
@@ -342,6 +505,7 @@ def run_protocol(args: argparse.Namespace) -> None:
             phase1_rounds=args.phase1_rounds,
             phase2_rounds=args.phase2_rounds,
             warmup_checkpoint=current_global,
+            expected_protocol=args.protocol_version,
         )
         if loaded_history != history:
             fedsto.write_history(history)
@@ -382,10 +546,18 @@ def run_protocol(args: argparse.Namespace) -> None:
                 next_global,
                 f"DQA-CWA global checkpoint for phase {phase} round {round_idx}",
                 force_retrain=args.force_retrain,
+                expected_protocol=args.protocol_version,
             )
             if reused_global is not None:
                 current_global = reused_global
-                history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+                history.append(
+                    {
+                        "phase": phase,
+                        "round": round_idx,
+                        "global": str(current_global.resolve()),
+                        "protocol": args.protocol_version,
+                    }
+                )
                 fedsto.write_history(history)
                 completed.add((phase, round_idx))
                 print(f"Recovered DQA-CWA phase {phase} round {round_idx} from existing global checkpoint.")
@@ -405,6 +577,7 @@ def run_protocol(args: argparse.Namespace) -> None:
                     fedsto.checkpoint_path(run_name),
                     f"DQA-CWA client run {run_name}",
                     force_retrain=args.force_retrain,
+                    expected_protocol=args.protocol_version,
                 )
                 if ckpt is not None and stats_required and not client_stats.exists():
                     print(
@@ -414,11 +587,22 @@ def run_protocol(args: argparse.Namespace) -> None:
                     ckpt = None
                 if ckpt is not None:
                     local_paths.append(ckpt)
-                    fedsto.make_start_checkpoint(ckpt, previous)
+                    fedsto.make_start_checkpoint(
+                        ckpt,
+                        previous,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_client_{client['id']}_latest",
+                    )
                     continue
 
-                if not fedsto.checkpoint_present(start):
-                    fedsto.make_start_checkpoint(current_global, start, previous)
+                if not fedsto.checkpoint_matches_protocol(start, args.protocol_version):
+                    fedsto.make_start_checkpoint(
+                        current_global,
+                        start,
+                        previous,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_phase{phase}_round{round_idx:03d}_client{client['id']}_start",
+                    )
                 cfg = fedsto.write_runtime_config(
                     run_name,
                     target=target,
@@ -441,8 +625,81 @@ def run_protocol(args: argparse.Namespace) -> None:
                     if client_stats.exists():
                         client_stats.unlink()
                 ckpt = run_train(fedsto, cfg, args, extra_env=extra_env)
+                if not args.dry_run:
+                    fedsto.mark_checkpoint_protocol(
+                        ckpt,
+                        args.protocol_version,
+                        f"dqa_phase{phase}_round{round_idx:03d}_client{client['id']}",
+                    )
                 local_paths.append(ckpt)
-                fedsto.make_start_checkpoint(ckpt, previous)
+                fedsto.make_start_checkpoint(
+                    ckpt,
+                    previous,
+                    protocol=args.protocol_version,
+                    stage=f"dqa_client_{client['id']}_latest",
+                )
+
+            aggregate_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_dqa_client_aggregate.pt"
+            aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_client_aggregate"
+            if phase >= args.dqa_start_phase:
+                stats_file = _stats_path(args.stats_root, phase, round_idx)
+                if not stats_file.exists():
+                    stats_file = build_round_stats_from_clients(args, phase, round_idx, setup) or stats_file
+                if not stats_file.exists():
+                    if not args.fallback_fedavg_without_stats:
+                        raise FileNotFoundError(
+                            f"Missing DQA-CWA stats file: {stats_file}. "
+                            "DQA is enabled for every post-warmup round; fix stats export before continuing."
+                        )
+                    aggregate_fedavg_checkpoints(
+                        client_checkpoints=local_paths,
+                        server_checkpoint=current_global,
+                        output_checkpoint=aggregate_start,
+                        repo_root=REPO_ROOT,
+                        localize_bn=args.localize_bn,
+                    )
+                    aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_missing_stats_fedavg_fallback"
+                else:
+                    stats = load_round_stats(stats_file, args.num_classes)
+                    state = load_state(dqa_state)
+                    skip_dqa, summary, reason = should_skip_dqa_round(stats, state, args)
+                    state = record_dqa_guard_state(
+                        state,
+                        phase=phase,
+                        round_idx=round_idx,
+                        summary=summary,
+                        used_dqa=not skip_dqa,
+                        reason=reason,
+                        args=args,
+                    )
+                    save_state(dqa_state, state)
+                    if skip_dqa:
+                        print(f"Skipping DQA-CWA for phase {phase} round {round_idx}: {reason}. Falling back to BN-local FedAvg.")
+                        aggregate_fedavg_checkpoints(
+                            client_checkpoints=local_paths,
+                            server_checkpoint=current_global,
+                            output_checkpoint=aggregate_start,
+                            repo_root=REPO_ROOT,
+                            localize_bn=args.localize_bn,
+                        )
+                        aggregate_stage = f"dqa_phase{phase}_round{round_idx:03d}_guarded_fedavg_fallback"
+                    else:
+                        aggregate_checkpoints(
+                            client_checkpoints=local_paths,
+                            server_checkpoint=current_global,
+                            output_checkpoint=aggregate_start,
+                            stats=stats,
+                            state_path=dqa_state,
+                            config=_dqa_config(args),
+                            repo_root=REPO_ROOT,
+                        )
+            else:
+                fedsto.aggregate_checkpoints(local_paths, current_global, aggregate_start, backbone_only=(phase == 1))
+            fedsto.mark_checkpoint_protocol(
+                aggregate_start,
+                args.protocol_version,
+                aggregate_stage,
+            )
 
             server_start = fedsto.GLOBAL_DIR / f"phase{phase}_round{round_idx:03d}_server_start.pt"
             server_name = _dqa_run_name(phase, round_idx)
@@ -450,10 +707,16 @@ def run_protocol(args: argparse.Namespace) -> None:
                 fedsto.checkpoint_path(server_name),
                 f"DQA-CWA server run {server_name}",
                 force_retrain=args.force_retrain,
+                expected_protocol=args.protocol_version,
             )
             if server_ckpt is None:
-                if not fedsto.checkpoint_present(server_start):
-                    fedsto.make_start_checkpoint(current_global, server_start)
+                if not fedsto.checkpoint_matches_protocol(server_start, args.protocol_version):
+                    fedsto.make_start_checkpoint(
+                        aggregate_start,
+                        server_start,
+                        protocol=args.protocol_version,
+                        stage=f"dqa_phase{phase}_round{round_idx:03d}_server_start",
+                    )
                 server_cfg = fedsto.write_runtime_config(
                     server_name,
                     target=None,
@@ -466,6 +729,12 @@ def run_protocol(args: argparse.Namespace) -> None:
                     device=config_device,
                 )
                 server_ckpt = run_train(fedsto, server_cfg, args)
+                if not args.dry_run:
+                    fedsto.mark_checkpoint_protocol(
+                        server_ckpt,
+                        args.protocol_version,
+                        f"dqa_phase{phase}_round{round_idx:03d}_server_update",
+                    )
 
             ensure_disk_space(
                 args.workspace_root,
@@ -475,33 +744,21 @@ def run_protocol(args: argparse.Namespace) -> None:
                 history=history,
                 keep_intermediates=args.keep_intermediate_checkpoints,
             )
-            if phase >= args.dqa_start_phase:
-                stats_file = _stats_path(args.stats_root, phase, round_idx)
-                if not stats_file.exists():
-                    stats_file = build_round_stats_from_clients(args, phase, round_idx, setup) or stats_file
-                if not stats_file.exists():
-                    if not args.fallback_fedavg_without_stats:
-                        raise FileNotFoundError(
-                            f"Missing DQA-CWA stats file: {stats_file}. "
-                            "Create it with collect_pseudo_stats.py or pass --fallback-fedavg-without-stats."
-                        )
-                    fedsto.aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=False)
-                else:
-                    stats = load_round_stats(stats_file, args.num_classes)
-                    aggregate_checkpoints(
-                        client_checkpoints=local_paths,
-                        server_checkpoint=server_ckpt,
-                        output_checkpoint=next_global,
-                        stats=stats,
-                        state_path=dqa_state,
-                        config=_dqa_config(args),
-                        repo_root=REPO_ROOT,
-                    )
-            else:
-                fedsto.aggregate_checkpoints(local_paths + [server_ckpt], server_ckpt, next_global, backbone_only=(phase == 1))
-
+            fedsto.make_start_checkpoint(
+                server_ckpt,
+                next_global,
+                protocol=args.protocol_version,
+                stage=f"dqa_phase{phase}_round{round_idx:03d}_global_after_server_update",
+            )
             current_global = next_global
-            history.append({"phase": phase, "round": round_idx, "global": str(current_global.resolve())})
+            history.append(
+                {
+                    "phase": phase,
+                    "round": round_idx,
+                    "global": str(current_global.resolve()),
+                    "protocol": args.protocol_version,
+                }
+            )
             fedsto.write_history(history)
             completed.add((phase, round_idx))
             print(f"Completed DQA-CWA phase {phase} round {round_idx}: {current_global}")
@@ -533,7 +790,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-free-gib",
         type=float,
-        default=80.0,
+        default=70.0,
         help="Abort before starting another train/aggregate step if free disk space under the workspace is below this value.",
     )
     parser.add_argument("--log-file", type=Path, default=None, help="Append EfficientTeacher train output here instead of flooding notebook stdout.")
@@ -541,18 +798,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stream-train-output", action="store_true", help="Stream full EfficientTeacher output to stdout instead of compact logging.")
     parser.add_argument("--stats-root", type=Path, default=RESEARCH_ROOT / "stats")
     parser.add_argument("--dqa-state", type=Path, default=None)
-    parser.add_argument("--dqa-start-phase", type=int, default=2)
+    parser.add_argument(
+        "--dqa-start-phase",
+        type=int,
+        default=2,
+        help="First federated phase that uses DQA aggregation. Default 2 preserves FedSTO phase 1 and starts DQA in phase 2.",
+    )
     parser.add_argument("--fallback-fedavg-without-stats", action="store_true")
+    parser.add_argument("--protocol-version", default=DQA_PROTOCOL_VERSION)
     parser.add_argument("--num-classes", type=int, default=10)
     parser.add_argument("--count-ema", type=float, default=0.70)
     parser.add_argument("--quality-ema", type=float, default=0.70)
     parser.add_argument("--alpha-ema", type=float, default=0.50)
     parser.add_argument("--temperature", type=float, default=1.50)
     parser.add_argument("--uniform-mix", type=float, default=0.05)
-    parser.add_argument("--classwise-blend", type=float, default=0.75)
+    parser.add_argument("--classwise-blend", type=float, default=0.35)
     parser.add_argument("--stability-lambda", type=float, default=0.25)
     parser.add_argument("--min-effective-count", type=float, default=1.0)
-    parser.add_argument("--server-anchor", type=float, default=0.50)
+    parser.add_argument("--server-anchor", type=float, default=1.25)
+    parser.add_argument("--localize-bn", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-dqa-guard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dqa-min-round-pseudo-count", type=float, default=1.0)
+    parser.add_argument("--dqa-drop-ratio-threshold", type=float, default=0.15)
+    parser.add_argument("--dqa-spike-ratio-threshold", type=float, default=3.0)
+    parser.add_argument("--dqa-guard-count-ema", type=float, default=0.70)
     return parser.parse_args()
 
 

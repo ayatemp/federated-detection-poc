@@ -1,0 +1,41 @@
+{
+  "num_rows": 390,
+  "num_rounds": 13,
+  "feature_count": 37,
+  "cv_splits": 5,
+  "target_columns": [
+    "target_low",
+    "target_high",
+    "target_nms"
+  ],
+  "model": "ExtraTreesRegressor(n_estimators=96,max_depth=6,min_samples_leaf=4)",
+  "cv_model_mae": {
+    "target_low": 0.010011,
+    "target_high": 0.015206,
+    "target_nms": 0.014353,
+    "mean": 0.01319
+  },
+  "fixed_05_mae": {
+    "target_low": 0.044092,
+    "target_high": 0.068533,
+    "target_nms": 0.035056,
+    "mean": 0.049227
+  },
+  "hand_rule_mae": {
+    "target_low": 0.040298,
+    "target_high": 0.039945,
+    "target_nms": 0.025656,
+    "mean": 0.0353
+  },
+  "cv_model_rmse": {
+    "target_low": 0.012216,
+    "target_high": 0.018479,
+    "target_nms": 0.018135,
+    "mean": 0.016277
+  },
+  "model_path": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/threshold_policy_model/artifacts/dqa05_threshold_policy.joblib",
+  "dataset_path": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/threshold_policy_model/artifacts/dqa05_policy_dataset.csv",
+  "predictions_path": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/threshold_policy_model/artifacts/dqa05_threshold_predictions.csv",
+  "latest_decision_path": "/app/Object_Detection/dynamic_quality_aware_classwise_aggregation/threshold_policy_model/artifacts/latest_policy_decision.json",
+  "label_note": "Targets are offline oracle thresholds derived from DQA05 next-round server mAP drift and pseudo-label quality/count statistics. They are not direct labels from a threshold sweep."
+}

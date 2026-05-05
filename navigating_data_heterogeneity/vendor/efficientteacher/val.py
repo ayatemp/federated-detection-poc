@@ -486,6 +486,7 @@ def parse_opt():
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
+    parser.add_argument('--plots', action=argparse.BooleanOptionalAction, default=True, help='save validation plots and batch previews')
     parser.add_argument('--val-ssod',  action='store_true', help='trigger when val semi-supervised') 
     parser.add_argument('--num-points',  type=int, default=0, help='num of keypoints') 
     parser.add_argument('--cfg', type=str, default='', help='The config file used for validation') 

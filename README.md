@@ -87,6 +87,65 @@ handle the pieces that usually make long federated runs painful:
 - evaluate final checkpoints with paper-style weather splits
 - compare outputs across baseline and DQA variants
 
+## Notebook Completion Notifications
+
+Use `notebook_notify.py` when you want a final notebook cell to post a message
+to Discord. It uses a Discord Incoming Webhook, so there is no bot process to
+keep running. Discord's webhook API is documented here:
+<https://docs.discord.com/developers/resources/webhook#execute-webhook>.
+
+1. In Discord, open the target channel settings, create an Incoming Webhook, and
+   copy its webhook URL.
+2. Set the URL outside the notebook so it is not committed:
+
+```bash
+export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+```
+
+If the notebook kernel was already running, restart it after exporting the
+variable. As another local-only option, copy `.env.example` to `.env` and put
+the webhook URL there; `.env` is ignored by git. You can also save it from a
+notebook without showing the URL in outputs:
+
+```python
+from getpass import getpass
+from notebook_notify import save_discord_webhook_url
+
+save_discord_webhook_url(getpass("Discord webhook URL: "))
+```
+
+3. Add this as the last notebook cell:
+
+```python
+from notebook_notify import notify_discord
+
+notify_discord(
+    """
+    DQA run finished.
+    Check validation_reports/ for the final metrics.
+    """,
+    title="Experiment complete",
+)
+```
+
+If the notebook kernel is started from a subdirectory and cannot import the
+helper, add this before the import:
+
+```python
+from pathlib import Path
+import sys
+
+root = next(
+    path for path in [Path.cwd(), *Path.cwd().parents]
+    if (path / "notebook_notify.py").exists()
+)
+sys.path.insert(0, str(root))
+```
+
+Messages longer than Discord's 2000 character content limit are split across
+multiple posts. Mentions are disabled by default to avoid accidental pings; pass
+`allow_mentions=True` only when the message intentionally includes mentions.
+
 ## Typical Outputs
 
 Generated artifacts live alongside the workflow that created them. In practice,

@@ -131,7 +131,7 @@ class LabelMatch(nn.Module):
             # for l in label:
                 # self.cls_tmp[int(l[0:1])] += 1
             # print(l)
-            self.cls_tmp[int(l[1:2])] += 1
+            self.cls_tmp[int(l[1])] += 1
         # label_num_per_img = np.sum(self.cls_tmp) / self.count
         # print('label_num_per_img:', label_num_per_img)
     

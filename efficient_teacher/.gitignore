@@ -1,0 +1,5 @@
+__pycache__/
+*.log
+efficientteacher_single_client/
+efficientteacher_localema/
+efficientteacher_pseudogt_dqa_probe_2h/

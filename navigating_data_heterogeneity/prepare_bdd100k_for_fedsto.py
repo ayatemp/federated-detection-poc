@@ -45,6 +45,7 @@ YOLO_NAMES = [
     "train",
 ]
 YOLO_CLASS_TO_ID = {name: idx for idx, name in enumerate(YOLO_NAMES)}
+KAGGLEHUB_DATASET = "awsaf49/bdd100k-dataset"
 
 
 @dataclass(frozen=True)
@@ -60,26 +61,64 @@ class PrepConfig:
     max_client_images: int | None = None
 
 
+def _looks_like_complete_bdd100k_root(path: Path) -> bool:
+    if not path.exists():
+        return False
+    label_paths = [path / "labels" / f"det_v2_{split}_release.json" for split in ("train", "val")]
+    image_roots = [path / "bdd100k" / "bdd100k" / "images" / "100k" / split for split in ("train", "val")]
+    return all(label_path.exists() and label_path.stat().st_size > 0 for label_path in label_paths) and all(
+        image_root.exists() for image_root in image_roots
+    )
+
+
 def dataset_root() -> Path:
     path_file = RAW_ROOT / "kagglehub_path.txt"
+    candidates: list[Path] = []
     if path_file.exists():
-        path = Path(path_file.read_text(encoding="utf-8").strip())
-        if path.exists():
-            return path
+        raw_path = path_file.read_text(encoding="utf-8").strip()
+        if raw_path:
+            candidates.append(Path(raw_path))
 
-    symlink = RAW_ROOT / "downloaded"
-    if symlink.exists():
-        return symlink.resolve()
-
-    fallback = Path(
-        "/Users/kakuayato/.cache/kagglehub/datasets/awsaf49/bdd100k-dataset/versions/1"
+    candidates.extend(
+        [
+            RAW_ROOT / "downloaded",
+            Path.home() / ".cache" / "kagglehub" / "datasets" / "awsaf49" / "bdd100k-dataset" / "versions" / "1",
+            Path("/root/.cache/kagglehub/datasets/awsaf49/bdd100k-dataset/versions/1"),
+            Path("/app/.cache/kagglehub/datasets/awsaf49/bdd100k-dataset/versions/1"),
+            Path("/Users/kakuayato/.cache/kagglehub/datasets/awsaf49/bdd100k-dataset/versions/1"),
+        ]
     )
-    if fallback.exists():
-        return fallback
 
-    raise FileNotFoundError(
-        "BDD100K dataset was not found. Run 00_download_and_inspect_bdd100k.ipynb first."
-    )
+    seen: set[Path] = set()
+    existing_incomplete: list[Path] = []
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _looks_like_complete_bdd100k_root(candidate):
+            return candidate.resolve()
+        if candidate.exists():
+            existing_incomplete.append(candidate.resolve())
+
+    try:
+        import kagglehub
+    except ModuleNotFoundError as exc:
+        details = ""
+        if existing_incomplete:
+            details = "\nFound incomplete/stale candidates:\n" + "\n".join(f"- {path}" for path in existing_incomplete)
+        raise FileNotFoundError(
+            "Complete BDD100K dataset was not found. Install kagglehub or run "
+            "00_download_and_inspect_bdd100k.ipynb / 00_1_repair_and_materialize_bdd100k.ipynb "
+            f"to restore {KAGGLEHUB_DATASET}.{details}"
+        ) from exc
+
+    restored = Path(kagglehub.dataset_download(KAGGLEHUB_DATASET)).resolve()
+    if not _looks_like_complete_bdd100k_root(restored):
+        raise FileNotFoundError(f"KaggleHub returned an incomplete BDD100K dataset root: {restored}")
+    RAW_ROOT.mkdir(parents=True, exist_ok=True)
+    path_file.write_text(str(restored) + "\n", encoding="utf-8")
+    return restored
 
 
 def label_json(root: Path, split: str) -> Path:

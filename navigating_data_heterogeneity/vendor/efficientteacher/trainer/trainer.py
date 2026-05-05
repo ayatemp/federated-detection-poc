@@ -7,6 +7,7 @@ Usage:
 """
 
 import logging
+import os
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -509,28 +510,35 @@ class Trainer:
     
     def after_train(self, callbacks, val):
         results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, clss)
+        skip_best_val = os.getenv('ET_SKIP_AFTER_TRAIN_BEST_VAL', '').strip().lower() in {'1', 'true', 'yes', 'on'}
         if self.RANK in [-1, 0]:
             for f in self.last, self.best:
                 if f.exists():
                     strip_optimizer(f)  # strip optimizers
                     if f is self.best:
-                        LOGGER.info(f'\nValidating {f}...')
-                        # val_da = self.cfg.DomainAdaptation.train_domain
-                        results, _, _ = val.run(self.data_dict,
-                                            batch_size=self.batch_size // self.WORLD_SIZE * 2,
-                                            imgsz=self.imgsz,
-                                            model=attempt_load(f, self.device).half(),
-                                            iou_thres=0.65,  # best pycocotools results at 0.65
-                                            single_cls=self.single_cls,
-                                            dataloader=self.val_loader,
-                                            save_dir=self.save_dir,
-                                            save_json=False,
-                                            verbose=True,
-                                            plots=True,
-                                            callbacks=callbacks,
-                                            compute_loss=self.compute_loss,
-                                            num_points=self.cfg.Dataset.np,
-                                            val_kp=self.cfg.Dataset.val_kp)  # val best model with plots
+                        if skip_best_val:
+                            LOGGER.info(f'\nSkipping final best-checkpoint validation for {f} because ET_SKIP_AFTER_TRAIN_BEST_VAL is enabled.')
+                        else:
+                            LOGGER.info(f'\nValidating {f}...')
+                            try:
+                                # val_da = self.cfg.DomainAdaptation.train_domain
+                                results, _, _ = val.run(self.data_dict,
+                                                    batch_size=self.batch_size // self.WORLD_SIZE * 2,
+                                                    imgsz=self.imgsz,
+                                                    model=attempt_load(f, self.device).half(),
+                                                    iou_thres=0.65,  # best pycocotools results at 0.65
+                                                    single_cls=self.single_cls,
+                                                    dataloader=self.val_loader,
+                                                    save_dir=self.save_dir,
+                                                    save_json=False,
+                                                    verbose=True,
+                                                    plots=True,
+                                                    callbacks=callbacks,
+                                                    compute_loss=self.compute_loss,
+                                                    num_points=self.cfg.Dataset.np,
+                                                    val_kp=self.cfg.Dataset.val_kp)  # val best model with plots
+                            except Exception as exc:
+                                LOGGER.warning(f'Final best-checkpoint validation failed for {f}: {exc}')
 
             callbacks.run('on_train_end', self.last, self.best, self.plots, self.epoch)
             LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")

@@ -4,7 +4,7 @@
 
 This directory contains the runnable scaffold for the DQA-CWA research idea.
 It is intentionally separate from `navigating_data_heterogeneity` so the FedSTO
-baseline can keep running unchanged.
+baseline can be inspected and reproduced independently.
 
 ## Core Idea
 
@@ -52,6 +52,24 @@ Notebook entry points:
 dynamic_quality_aware_classwise_aggregation/01_dqa_cwa_reproduction.ipynb
 dynamic_quality_aware_classwise_aggregation/02_dqa_cwa_exact_reproduction.ipynb
 dynamic_quality_aware_classwise_aggregation/02_2_dqa_cwa_14h_reproduction.ipynb
+dynamic_quality_aware_classwise_aggregation/02_3_dqa_cwa_14h_evaluation.ipynb
+dynamic_quality_aware_classwise_aggregation/03_dqa_cwa_corrected_12h_reproduction.ipynb
+dynamic_quality_aware_classwise_aggregation/03_2_dqa_cwa_corrected_12h_evaluation.ipynb
+```
+
+New experiments are organized in self-contained subprojects so the older
+exploratory notebooks do not need to move.  The current next-line DQA project
+is:
+
+```text
+dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/
+```
+
+Its first notebook tests repair-oriented DQA on six `scene x day/night`
+clients:
+
+```text
+dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/notebooks/01_repair_oriented_scene_daynight_dqa.ipynb
 ```
 
 ## Run Safety
@@ -62,7 +80,7 @@ The runner is restartable and disk-conscious by default:
 - Existing valid `last.pt` / global checkpoints are reused after interruption.
 - Completed-round intermediate `last.pt`, `best.pt`, and start checkpoints are deleted after each global checkpoint is written.
 - Full EfficientTeacher training output is appended to `efficientteacher_dqa_cwa/dqa_cwa_latest.log` so notebooks stay responsive.
-- `--min-free-gib` defaults to `80`; if free space drops below that, the runner cleans completed intermediates and then stops with a clear error instead of failing inside `torch.save`.
+- `--min-free-gib` defaults to `70`; if free space drops below that, the runner cleans completed intermediates and then stops with a clear error instead of failing inside `torch.save`.
 
 Use `--keep-intermediate-checkpoints` only when you intentionally need every per-run checkpoint for debugging. Use `--stream-train-output` only when running outside a notebook and you want the raw training logs in the terminal.
 
@@ -78,14 +96,17 @@ To refresh the notebook after edits:
 python3 dynamic_quality_aware_classwise_aggregation/generate_dqa_cwa_notebook.py
 ```
 
-The `01` notebook is the fast pilot path. The `02` notebook is the paper-scale path and uses its own workspace (`efficientteacher_dqa_cwa_exact`) and stats directory (`stats_exact`) so it does not collide with the pilot run. The `02_2` notebook is the same-day middle path, tuned from the completed FedSTO runtime log to target roughly 13-14 hours in its own workspace (`efficientteacher_dqa_cwa_14h`) and stats directory (`stats_14h`).
+The `01` notebook is the fast pilot path. The `02` notebook is the paper-scale path and uses its own workspace (`efficientteacher_dqa_cwa_exact`) and stats directory (`stats_exact`) so it does not collide with the pilot run. The `02_2` notebook is the same-day middle path, tuned from the completed FedSTO runtime log to target roughly 13-14 hours in its own workspace (`efficientteacher_dqa_cwa_14h`) and stats directory (`stats_14h`). The `02_3` notebook is the read-only evaluation pass for that 13-14 hour workspace: it aggregates `results.csv` files into a compact training summary, renders mAP/precision/recall plots, and lines up the DQA server checkpoints against the FedSTO baseline when those artifacts are present. The `02_4` notebook is the dedicated paper-protocol evaluation pass: it runs the shared per-weather validation script against the selected DQA workspace and reshapes the resulting `paper_protocol_eval_summary.csv` into checkpoint-by-split tables and plots.
+
+The `03` and `03_2` notebooks are the corrected path to use next. They apply the FedSTO Algorithm 1 order exactly: client update, client aggregation, server update on labeled data, then server-updated global checkpoint. DQA-CWA starts at phase 1 in this path, so every post-warmup federated round uses dynamic class-wise aggregation rather than FedSTO aggregation.
 
 ## Stats Format
 
-For phase 2 round 1, the runner expects:
+For each post-warmup DQA round, the runner expects per-client pseudo-label stats.
+For example, phase 1 round 1 is:
 
 ```text
-dynamic_quality_aware_classwise_aggregation/stats/phase2_round001.json
+dynamic_quality_aware_classwise_aggregation/stats/phase1_round001.json
 ```
 
 Example:
@@ -110,7 +131,7 @@ python3 dynamic_quality_aware_classwise_aggregation/collect_pseudo_stats.py \
   --client 0=/path/to/client0/pseudo_labels \
   --client 1=/path/to/client1/pseudo_labels \
   --client 2=/path/to/client2/pseudo_labels \
-  --out dynamic_quality_aware_classwise_aggregation/stats/phase2_round001.json
+  --out dynamic_quality_aware_classwise_aggregation/stats/phase1_round001.json
 ```
 
 Supported text rows include:
@@ -139,14 +160,15 @@ python3 dynamic_quality_aware_classwise_aggregation/run_dqa_cwa_fedsto.py \
   --batch-size 64 \
   --workers 0 \
   --gpus 2 \
-  --min-free-gib 80
+  --min-free-gib 70
 ```
 
 For a more stable 24-hour pilot, override these with `--warmup-epochs 20 --phase1-rounds 40 --phase2-rounds 60`. For paper-scale reproduction, override these with `--warmup-epochs 50 --phase1-rounds 100 --phase2-rounds 150`.
 
-By default, DQA-CWA starts in phase 2. If a required stats file is missing, the
-runner stops instead of silently pretending the proposed method ran. For smoke
-tests only, pass `--fallback-fedavg-without-stats`.
+By default, DQA-CWA starts in phase 1, so every federated round after warm-up is
+true DQA. If a required stats file is missing, the runner stops instead of
+silently pretending the proposed method ran. For smoke tests only, pass
+`--fallback-fedavg-without-stats`.
 
 ## Paper-Style Evaluation
 
