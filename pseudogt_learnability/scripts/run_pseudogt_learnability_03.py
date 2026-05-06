@@ -408,7 +408,18 @@ def run_train(setup, fedsto, config: Path, *, dry_run: bool, gpus: int, master_p
         cmd = [sys.executable, "train.py", "--cfg", str(config.resolve())]
     print(" ".join(cmd))
     if not dry_run:
-        subprocess.run(cmd, cwd=setup.ET_ROOT, check=True)
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                subprocess.run(cmd, cwd=setup.ET_ROOT, check=True)
+                break
+            except subprocess.CalledProcessError:
+                if attempt >= max_attempts:
+                    raise
+                print(
+                    f"Training subprocess failed on attempt {attempt}/{max_attempts}; "
+                    "retrying once from the same config."
+                )
     with config.open(encoding="utf-8") as f:
         run_name = yaml.safe_load(f)["name"]
     return fedsto.checkpoint_path(run_name)
