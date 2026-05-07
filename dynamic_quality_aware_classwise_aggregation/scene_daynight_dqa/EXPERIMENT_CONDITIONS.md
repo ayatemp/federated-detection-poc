@@ -122,21 +122,22 @@ Runner:
 scripts/run_scene_daynight_dqa_01_1.py
 ```
 
-Default diagnostic settings use 2 rounds, 1 GPU, batch size 80, 4 workers, and
-up to 800 target images per client.  This is intentionally safer than the 01_0
-full run because 2-GPU DDP produced intermittent SIGTERM failures.  Set
-`MAX_IMAGES_PER_CLIENT = 0` and `ROUNDS = 3` in the notebook for the full
-1500-image condition.
+Default diagnostic settings follow the 01_0 full-run resource setting: 3
+rounds, all 1500 target images per client, 2 GPUs, batch size 160, and 8
+workers.
+
+The notebook default is now improvement-only: `all` resolves to DQA variants
+only.  `repair_only` and `fedavg_target_double` remain available by explicit
+condition name for debugging, but they are not part of the default run because
+the matched controls already live in 01_0.
 
 | condition | purpose |
 | --- | --- |
-| `repair_only` | source-repair baseline |
 | `dqa_current` | 01_0-style source-heavy full-model DQA |
 | `dqa_source_light` | tests whether reducing source dominance creates useful target signal |
 | `dqa_target_double` | source once, target pseudoGT twice, with softer DQA anchor |
 | `dqa_head_lowbox` | head-only target adaptation with weak bbox loss |
 | `dqa_nonbackbone_lowbox` | neck/head adaptation with weak bbox loss |
-| `fedavg_target_double` | target-heavy pseudoGT stress test without DQA |
 
 01_1 supports three claims:
 
@@ -168,16 +169,102 @@ scripts/run_scene_daynight_dqa_01_2.py
 
 | condition | purpose |
 | --- | --- |
-| `repair_only` | source-repair baseline |
-| `ssod_fedavg` | FedSTO-like SSOD client training with plain FedAvg |
 | `ssod_dqa` | SSOD client training with DQA reliability from stable pseudo boxes |
 | `ssod_dqa_head` | head-only SSOD target adaptation with weak bbox loss |
 | `ssod_dqa_nonbackbone` | neck/head SSOD target adaptation with reduced bbox loss |
 
 01_2 supports a different claim from 01_1:
 
+The notebook default is improvement-only: `all` resolves to `ssod_dqa`,
+`ssod_dqa_head`, and `ssod_dqa_nonbackbone`.  `repair_only` and `ssod_fedavg`
+remain available by explicit condition name, but they are not part of the
+default run.
+
 | claim | supporting evidence |
 | --- | --- |
 | fixed pseudoGT supervision is the bottleneck | 01_1 fails but 01_2 SSOD variants improve repaired/worst/night mAP |
-| DQA is useful for SSOD client heterogeneity | `ssod_dqa` aggregate or repaired mAP exceeds `ssod_fedavg` |
 | target data matters beyond source repair | any SSOD-DQA variant beats `repair_only` on total, worst split, or night average |
+
+The optional `ssod_fedavg` condition can still be run explicitly if a new SSOD
+control is needed later.
+
+## 02 Head-to-Full Long DQA
+
+The active 02 experiment tests the new phase interpretation:
+
+- Phase1 should be long and conservative so client/class/domain differences can
+  emerge without pseudoGT damaging the detector backbone.
+- Phase2 should be short and stronger so the Phase1 target signal can touch the
+  full model before confidence/easy-sample bias dominates.
+- Evaluation should be final-focused by default because a 30+2 round pilot is
+  already a long run.
+
+Notebook:
+
+```text
+notebooks/02_head_to_full_long_dqa.ipynb
+```
+
+Runner:
+
+```text
+scripts/run_scene_daynight_dqa_02_head_to_full.py
+```
+
+Default schedule:
+
+| phase | rounds | client train scope | client LR | source:pseudo repeat | bbox loss | role |
+| --- | ---: | --- | ---: | --- | ---: | --- |
+| Phase1 | 30 | `neck_head` | 0.0008 | 1:2 | 0.005 | build stable DQA client/class/domain signal |
+| Phase2 | 2 | `all` | 0.0003 | 1:1 | 0.010 | brief full-model target burst |
+
+Final-focused paper-protocol evaluation includes only:
+
+- `warmup_global`
+- `phase1_final_aggregate`
+- `phase1_final_repair`
+- `phase2_final_aggregate`
+- `phase2_final_repair`
+
+The key claim is supported only if `phase2_final_repair` beats the 01_0
+`repair_only` reference on total repaired mAP50:95, or improves the worst/night
+client splits while preserving total mAP.
+
+## Superseded 02 Target-Consistency Repair DQA
+
+The 01 series did not show post-repair gains over `repair_only`, even when DQA
+preserved the aggregate checkpoint better than FedAvg.  The 02 notebook tests
+the hypothesis that source-only server repair erases target-domain information
+introduced by the clients.
+
+Notebook:
+
+```text
+notebooks/02_target_consistency_repair_dqa.ipynb
+```
+
+Runner:
+
+```text
+scripts/run_scene_daynight_dqa_02.py
+```
+
+Each round keeps the 01_2 SSOD-DQA client update, then changes server repair:
+
+1. aggregate client checkpoints with DQA-CWA v2;
+2. train the server on source cloudy GT as before;
+3. also expose the server repair step to unlabeled client target images through
+   weak SSOD target consistency on the neck/head repair scope;
+4. keep pseudo bbox loss weak or disabled during repair so target consistency
+   does not become ordinary noisy pseudo-box supervision.
+
+Default improvement conditions:
+
+| condition | purpose |
+| --- | --- |
+| `tc_repair_light` | target-consistency repair using all client target images uniformly |
+| `tc_repair_night_focus` | same repair, but oversamples night clients and the persistent worst split `highway_night` |
+
+The key claim is supported only if 02 beats `01_0/repair_only` on total
+repaired mAP50:95, or improves `highway_night` / night-average mAP50:95 while
+not lowering total mAP.

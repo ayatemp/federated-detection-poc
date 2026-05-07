@@ -145,6 +145,15 @@ def process_batch(detections, labels, iouv):
     return torch.tensor(correct, dtype=torch.bool, device=iouv.device)
 
 
+def unwrap_detector_output(output):
+    """Return the detector prediction tensor from nested SSOD output tuples."""
+    while isinstance(output, (tuple, list)):
+        if not output:
+            return output
+        output = output[0]
+    return output
+
+
 @torch.no_grad()
 def run(data,
         weights=None,  # model.pt path(s)
@@ -318,6 +327,7 @@ def run(data,
                     loss += compute_loss([x.float() for x in train_out], targets)[1]  # box, obj, cls
             else:
                 out = outputs[0]
+        out = unwrap_detector_output(out)
         # Run NMS
         # if num_points == 4:
             # targets[:, 2:] *= torch.Tensor([width, height, width, height, width, height, width, height, width, height, width, height]).to(device)  # to pixels

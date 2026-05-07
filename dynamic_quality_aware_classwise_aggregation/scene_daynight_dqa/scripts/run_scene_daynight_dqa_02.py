@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run scene-daynight DQA 01_1 diagnostic sweep.
+"""Run scene-daynight DQA 02 target-consistency repair.
 
-01_1 is designed as an improvement-only DQA sweep.
-
-The 01_0 notebook already contains the repair-only and FedAvg controls.  This
-runner keeps those controls available for explicit debugging, but the default
-`all` condition runs only DQA variants.
+The completed 01 series showed that DQA protects the aggregate checkpoint before
+repair, but source-only server repair collapses all variants back to the same
+final mAP as repair-only.  This runner therefore keeps the SSOD-DQA client
+round, then changes the server repair objective from source-only supervised
+repair to source GT plus weak target consistency on the unlabeled client images.
 """
 
 from __future__ import annotations
@@ -15,14 +15,12 @@ import copy
 import csv
 import json
 import sys
-from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
-import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,12 +28,13 @@ REPO_ROOT = PROJECT_ROOT.parents[1]
 NAV_ROOT = REPO_ROOT / "navigating_data_heterogeneity"
 DQA_ROOT = PROJECT_ROOT.parent
 PSEUDOGT_SCRIPTS = REPO_ROOT / "pseudogt_learnability" / "scripts"
-PROTOCOL_VERSION = "scene_daynight_dqa_01_1_diagnostic_sweep_v1"
+PROTOCOL_VERSION = "scene_daynight_dqa_02_target_consistency_repair_v1"
 
 for path in (NAV_ROOT, DQA_ROOT, PSEUDOGT_SCRIPTS, PROJECT_ROOT / "scripts", REPO_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import dqa_cwa_aggregation_v2 as dqa_v2  # noqa: E402
 import run_pseudogt_learnability_02 as pl02  # noqa: E402
 import run_pseudogt_learnability_03 as pl03  # noqa: E402
 import run_scene_daynight_dqa_01 as dqa01  # noqa: E402
@@ -52,28 +51,19 @@ class ConditionSpec:
     note: str
     train_scope: str = "all"
     aggregate_scope: str = "all"
-    client_lr0: float = 0.0005
-    source_repeat: int = 2
-    pseudo_repeat: int = 1
+    client_lr0: float = 0.001
     orthogonal_weight: float = 1e-4
-    loss_box: float | None = None
+    ssod_box_loss_weight: float = 0.05
+    repair_target_policy: str = "all"
+    repair_target_loss_weight: float = 0.25
+    repair_box_loss_weight: float = 0.0
+    repair_train_scope: str = "neck_head"
+    repair_with_da_loss: bool = False
+    repair_da_loss_weight: float = 0.02
     dqa_min_server_alpha: float | None = None
     dqa_server_anchor: float | None = None
     dqa_residual_blend: float | None = None
     dqa_classwise_blend: float | None = None
-
-    def variant(self) -> pl03.Variant:
-        return pl03.Variant(
-            name=self.name,
-            train_scope=self.train_scope,
-            aggregate_scope=self.aggregate_scope,
-            client_epochs=1,
-            client_lr0=self.client_lr0,
-            source_repeat=self.source_repeat,
-            pseudo_repeat=self.pseudo_repeat,
-            orthogonal_weight=self.orthogonal_weight,
-            note=self.note,
-        )
 
 
 CONDITION_SPECS: dict[str, ConditionSpec] = {
@@ -82,83 +72,69 @@ CONDITION_SPECS: dict[str, ConditionSpec] = {
         mode="repair_only",
         note="Control: warmup plus repeated supervised source repair only.",
     ),
-    "dqa_current": ConditionSpec(
-        name="dqa_current",
-        mode="dqa",
-        note="01_0-style DQA: source-heavy full-model client update.",
+    "ssod_fedavg": ConditionSpec(
+        name="ssod_fedavg",
+        mode="ssod_fedavg",
+        note="FedSTO-like SSOD client training with plain FedAvg aggregation.",
+        client_lr0=0.001,
     ),
-    "dqa_source_light": ConditionSpec(
-        name="dqa_source_light",
-        mode="dqa",
-        note="Ablation: reduce source dominance so client domain signal can move the model.",
-        source_repeat=1,
-        pseudo_repeat=1,
-        client_lr0=0.00045,
-    ),
-    "dqa_target_double": ConditionSpec(
-        name="dqa_target_double",
-        mode="dqa",
-        note="Target-heavy DQA: target pseudoGT appears twice, source once.",
-        source_repeat=1,
-        pseudo_repeat=2,
-        client_lr0=0.00035,
-        loss_box=0.03,
-        dqa_min_server_alpha=0.76,
-        dqa_server_anchor=14.0,
-        dqa_residual_blend=0.10,
-        dqa_classwise_blend=0.12,
-    ),
-    "dqa_head_lowbox": ConditionSpec(
-        name="dqa_head_lowbox",
-        mode="dqa",
+    "tc_repair_light": ConditionSpec(
+        name="tc_repair_light",
+        mode="ssod_dqa",
         note=(
-            "Head-only target adaptation with weak bbox loss. Tests whether pseudoGT "
-            "is useful as class/objectness/domain signal without trusting box regression."
+            "SSOD-DQA client adaptation followed by source GT repair with weak "
+            "target consistency over all scene/daynight clients."
         ),
         train_scope="neck_head",
-        aggregate_scope="all",
-        source_repeat=1,
-        pseudo_repeat=2,
-        client_lr0=0.0008,
-        loss_box=0.005,
-        dqa_min_server_alpha=0.72,
-        dqa_server_anchor=12.0,
-        dqa_residual_blend=0.12,
-        dqa_classwise_blend=0.14,
+        client_lr0=0.0015,
+        ssod_box_loss_weight=0.01,
+        repair_target_policy="all",
+        repair_target_loss_weight=0.25,
+        repair_box_loss_weight=0.0,
+        dqa_min_server_alpha=0.70,
+        dqa_server_anchor=10.0,
+        dqa_residual_blend=0.14,
+        dqa_classwise_blend=0.16,
     ),
-    "dqa_nonbackbone_lowbox": ConditionSpec(
-        name="dqa_nonbackbone_lowbox",
-        mode="dqa",
-        note="Neck/head adaptation with weak bbox loss. Tests target-specific non-backbone adaptation.",
+    "tc_repair_night_focus": ConditionSpec(
+        name="tc_repair_night_focus",
+        mode="ssod_dqa",
+        note=(
+            "Same as tc_repair_light, but the repair target stream oversamples "
+            "night clients and the persistent worst split highway_night."
+        ),
+        train_scope="neck_head",
+        client_lr0=0.0015,
+        ssod_box_loss_weight=0.01,
+        repair_target_policy="night_focus",
+        repair_target_loss_weight=0.30,
+        repair_box_loss_weight=0.0,
+        dqa_min_server_alpha=0.70,
+        dqa_server_anchor=10.0,
+        dqa_residual_blend=0.14,
+        dqa_classwise_blend=0.16,
+    ),
+    "tc_repair_nonbackbone": ConditionSpec(
+        name="tc_repair_nonbackbone",
+        mode="ssod_dqa",
+        note=(
+            "Neck/head SSOD-DQA client adaptation with target-consistency repair. "
+            "This checks whether slightly deeper target adaptation survives repair."
+        ),
         train_scope="non_backbone",
-        aggregate_scope="all",
-        source_repeat=1,
-        pseudo_repeat=2,
-        client_lr0=0.00055,
-        loss_box=0.01,
-        dqa_min_server_alpha=0.74,
-        dqa_server_anchor=13.0,
-        dqa_residual_blend=0.10,
-        dqa_classwise_blend=0.12,
-    ),
-    "fedavg_target_double": ConditionSpec(
-        name="fedavg_target_double",
-        mode="fedavg",
-        note="FedAvg stress test with the same target-heavy client recipe as dqa_target_double.",
-        source_repeat=1,
-        pseudo_repeat=2,
-        client_lr0=0.00035,
-        loss_box=0.03,
+        client_lr0=0.0012,
+        ssod_box_loss_weight=0.02,
+        repair_target_policy="all",
+        repair_target_loss_weight=0.25,
+        repair_box_loss_weight=0.005,
+        dqa_min_server_alpha=0.70,
+        dqa_server_anchor=10.0,
+        dqa_residual_blend=0.14,
+        dqa_classwise_blend=0.16,
     ),
 }
 
-DEFAULT_CONDITIONS = (
-    "dqa_current",
-    "dqa_source_light",
-    "dqa_target_double",
-    "dqa_head_lowbox",
-    "dqa_nonbackbone_lowbox",
-)
+DEFAULT_CONDITIONS = ("tc_repair_light", "tc_repair_night_focus")
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -217,26 +193,155 @@ def condition_args(args: argparse.Namespace, workspace: Path, spec: ConditionSpe
     return copied
 
 
-@contextmanager
-def patched_client_config(loss_box: float | None) -> Iterator[None]:
-    original = pl03.write_client_config
-    if loss_box is None:
-        yield
-        return
+def config_device(args: argparse.Namespace) -> str:
+    # Keep EfficientTeacher's training config on the default string-typed device
+    # field. Pseudo-labeling/evaluation still use args.device directly.
+    return ""
 
-    def wrapped(setup, variant, client, start, args, round_idx):  # noqa: ANN001
-        path = original(setup, variant, client, start, args, round_idx)
-        cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
-        cfg.setdefault("Loss", {})
-        cfg["Loss"]["box"] = float(loss_box)
-        path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
-        return path
 
-    pl03.write_client_config = wrapped
-    try:
-        yield
-    finally:
-        pl03.write_client_config = original
+def write_ssod_client_config(
+    setup,
+    spec: ConditionSpec,
+    client: dict[str, Any],
+    start: Path,
+    args: argparse.Namespace,
+    round_idx: int,
+) -> Path:
+    tag = round_tag(round_idx)
+    client_tag = f"client{client['id']}_{client['weather']}"
+    run_name = f"sds012_{tag}_{spec.name}_{client_tag}"
+    source_list = setup.LIST_ROOT / "server_cloudy_train.txt"
+    target_list = setup.LIST_ROOT / f"client_{client['id']}_{client['weather']}_target.txt"
+    cfg = setup.efficientteacher_config(
+        name=run_name,
+        train=source_list,
+        val=setup.LIST_ROOT / "server_cloudy_val.txt",
+        target=target_list,
+        weights=str(start.resolve()),
+        epochs=args.client_epochs,
+        train_scope=spec.train_scope,
+        orthogonal_weight=spec.orthogonal_weight,
+        batch_size=args.batch_size,
+        workers=args.workers,
+        device=config_device(args),
+    )
+    cfg["linear_lr"] = False
+    cfg["hyp"]["lr0"] = spec.client_lr0
+    cfg["hyp"]["lrf"] = 1.0
+    cfg["hyp"]["warmup_epochs"] = 0
+    cfg["hyp"]["mixup"] = 0.0
+    cfg["hyp"]["scale"] = 0.25
+    cfg["hyp"]["hsv_s"] = 0.35
+    cfg["hyp"]["hsv_v"] = 0.20
+    cfg["FedSTO"]["unlabeled_only_client"] = True
+    cfg["SSOD"]["train_domain"] = True
+    cfg["SSOD"]["box_loss_weight"] = float(spec.ssod_box_loss_weight)
+    cfg["SSOD"]["teacher_loss_weight"] = 1.0
+    cfg["SSOD"]["pseudo_label_with_bbox"] = True
+    cfg["SSOD"]["pseudo_label_with_cls"] = True
+    cfg["SSOD"]["pseudo_label_with_obj"] = True
+    return setup.write_config(f"{run_name}.yaml", cfg)
+
+
+def _list_lines(path: Path) -> list[str]:
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def write_repair_target_list(setup, clients: list[dict[str, Any]], spec: ConditionSpec, round_idx: int) -> Path:
+    """Build the unlabeled target stream used only during server repair.
+
+    Repeating paths is intentional for the `night_focus` policy: EfficientTeacher
+    samples from the target list, so repetition provides a simple domain-prior
+    without changing the underlying target images.
+    """
+    tag = round_tag(round_idx)
+    rows: list[str] = []
+    counts: dict[str, int] = {}
+    for client in clients:
+        client_tag = f"client{client['id']}_{client['weather']}"
+        target_list = setup.LIST_ROOT / f"client_{client['id']}_{client['weather']}_target.txt"
+        images = _list_lines(target_list)
+        repeats = 1
+        if spec.repair_target_policy == "night_focus" and client["timeofday"] == "night":
+            repeats += 1
+        if spec.repair_target_policy == "night_focus" and client["weather"] == "highway_night":
+            repeats += 1
+        rows.extend(images * repeats)
+        counts[client_tag] = len(images) * repeats
+
+    if not rows:
+        raise RuntimeError(f"No target images found for repair target policy={spec.repair_target_policy}")
+    out = setup.LIST_ROOT / f"02_{tag}_{spec.name}_repair_target_{spec.repair_target_policy}.txt"
+    out.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    stats_path = setup.WORK_ROOT / "stats" / f"02_{tag}_{spec.name}_repair_target_manifest.json"
+    stats_path.parent.mkdir(parents=True, exist_ok=True)
+    stats_path.write_text(
+        json.dumps(
+            {
+                "condition": spec.name,
+                "round": round_idx,
+                "policy": spec.repair_target_policy,
+                "total_rows": len(rows),
+                "unique_images": len(set(rows)),
+                "client_rows": counts,
+                "list": str(out.resolve()),
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return out
+
+
+def write_target_consistency_repair_config(
+    setup,
+    spec: ConditionSpec,
+    start: Path,
+    args: argparse.Namespace,
+    clients: list[dict[str, Any]],
+    round_idx: int,
+) -> Path:
+    tag = round_tag(round_idx)
+    run_name = f"sdn02_{tag}_{spec.name}_target_consistency_repair"
+    target_list = write_repair_target_list(setup, clients, spec, round_idx)
+    cfg = setup.efficientteacher_config(
+        name=run_name,
+        train=setup.LIST_ROOT / "server_cloudy_train.txt",
+        val=setup.LIST_ROOT / "server_cloudy_val.txt",
+        target=target_list,
+        weights=str(start.resolve()),
+        epochs=args.server_repair_epochs,
+        train_scope=spec.repair_train_scope,
+        orthogonal_weight=0.0,
+        batch_size=args.batch_size,
+        workers=args.workers,
+        device=config_device(args),
+    )
+    cfg["linear_lr"] = False
+    cfg["hyp"]["lr0"] = args.server_repair_lr
+    cfg["hyp"]["lrf"] = 1.0
+    cfg["hyp"]["warmup_epochs"] = 0
+    cfg["hyp"]["mixup"] = 0.0
+    cfg["hyp"]["scale"] = 0.20
+    cfg["hyp"]["hsv_s"] = 0.25
+    cfg["hyp"]["hsv_v"] = 0.15
+    cfg["FedSTO"]["unlabeled_only_client"] = False
+    cfg["SSOD"]["train_domain"] = True
+    cfg["SSOD"]["teacher_loss_weight"] = float(spec.repair_target_loss_weight)
+    cfg["SSOD"]["box_loss_weight"] = float(spec.repair_box_loss_weight)
+    cfg["SSOD"]["obj_loss_weight"] = 1.0
+    cfg["SSOD"]["cls_loss_weight"] = 0.0
+    cfg["SSOD"]["pseudo_label_with_bbox"] = spec.repair_box_loss_weight > 0
+    cfg["SSOD"]["pseudo_label_with_cls"] = True
+    cfg["SSOD"]["pseudo_label_with_obj"] = True
+    cfg["SSOD"]["with_da_loss"] = bool(spec.repair_with_da_loss)
+    cfg["SSOD"]["da_loss_weights"] = float(spec.repair_da_loss_weight)
+    cfg["SSOD"]["conf_thres"] = 0.60
+    cfg["SSOD"]["valid_thres"] = 0.50
+    cfg["SSOD"]["nms_conf_thres"] = 0.25
+    cfg["SSOD"]["nms_iou_thres"] = 0.60
+    return setup.write_config(f"{run_name}.yaml", cfg)
 
 
 def normalize_records(records: list[dict[str, Any]], condition: str) -> list[dict[str, str]]:
@@ -256,14 +361,139 @@ def normalize_records(records: list[dict[str, Any]], condition: str) -> list[dic
     return normalized
 
 
+def save_checkpoint_record(
+    records: list[dict[str, str]],
+    label: str,
+    path: Path,
+    kind: str,
+    *,
+    round_idx: int | None = None,
+    client: str = "",
+    variant: str = "",
+) -> None:
+    records.append(
+        {
+            "label": label,
+            "kind": kind,
+            "round": "" if round_idx is None else str(round_idx),
+            "client": client,
+            "variant": variant,
+            "path": str(path.resolve()),
+        }
+    )
+
+
 def aggregate_label(spec: ConditionSpec, tag: str) -> str | None:
     if spec.mode == "repair_only":
         return None
-    if spec.mode == "fedavg":
-        return f"{tag}_aggregate_{spec.aggregate_scope}"
-    if spec.mode == "dqa":
-        return f"{tag}_dqa_aggregate"
+    if spec.mode == "ssod_fedavg":
+        return f"{tag}_ssod_aggregate_{spec.aggregate_scope}"
+    if spec.mode == "ssod_dqa":
+        return f"{tag}_ssod_dqa_aggregate"
     raise ValueError(spec.mode)
+
+
+def run_ssod_round(
+    setup,
+    fedsto,
+    spec: ConditionSpec,
+    current_global: Path,
+    args: argparse.Namespace,
+    clients: list[dict[str, Any]],
+    round_idx: int,
+    port_offset: int,
+) -> tuple[list[dict[str, str]], Path, dict[str, Any] | None, dict[str, Any] | None, int]:
+    tag = round_tag(round_idx)
+    print(f"\n=== {tag}: {spec.name} SSOD client round ===")
+    records: list[dict[str, str]] = []
+    local_paths: list[Path] = []
+    pseudo_stats: dict[str, Any] | None = None
+    dqa_state: dict[str, Any] | None = None
+
+    if spec.mode == "ssod_dqa":
+        pseudo_stats = pl03.generate_round_pseudo_labels(setup, current_global, args, clients, round_idx)
+
+    for client in clients:
+        client_tag = f"client{client['id']}_{client['weather']}"
+        start = fedsto.CLIENT_STATE_DIR / f"sds012_{tag}_{spec.name}_{client_tag}_start.pt"
+        run_name = f"sds012_{tag}_{spec.name}_{client_tag}"
+        raw_ckpt = fedsto.checkpoint_path(run_name)
+        final_ckpt = args.workspace_root / "checkpoints" / f"{tag}_{spec.name}_{client_tag}.pt"
+
+        if not args.dry_run and not fedsto.checkpoint_matches_protocol(start, PROTOCOL_VERSION):
+            fedsto.make_start_checkpoint(current_global, start, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_{client_tag}_start")
+
+        if not pl03.reusable_checkpoint(fedsto, final_ckpt, args.force):
+            cfg = write_ssod_client_config(setup, spec, client, start, args, round_idx)
+            raw_ckpt = pl03.run_train(
+                setup,
+                fedsto,
+                cfg,
+                dry_run=args.dry_run,
+                gpus=args.gpus,
+                master_port=args.master_port + port_offset,
+            )
+            port_offset += 1
+            if not args.dry_run:
+                fedsto.mark_checkpoint_protocol(raw_ckpt, PROTOCOL_VERSION, f"{tag}_{spec.name}_{client_tag}_raw")
+                fedsto.make_start_checkpoint(raw_ckpt, final_ckpt, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_{client_tag}")
+                pl03.cleanup_training_artifacts(raw_ckpt, start)
+
+        local_paths.append(final_ckpt)
+        save_checkpoint_record(records, f"{tag}_{client_tag}", final_ckpt, "client", round_idx=round_idx, client=client_tag, variant=spec.name)
+
+    if spec.mode == "ssod_fedavg":
+        aggregate = args.workspace_root / "checkpoints" / f"{tag}_{spec.name}_aggregate_{spec.aggregate_scope}.pt"
+        if not args.dry_run and not pl03.reusable_checkpoint(fedsto, aggregate, args.force):
+            fedsto.aggregate_checkpoints(local_paths, current_global, aggregate, backbone_only=(spec.aggregate_scope == "backbone"))
+            fedsto.mark_checkpoint_protocol(aggregate, PROTOCOL_VERSION, f"{tag}_{spec.name}_aggregate_{spec.aggregate_scope}")
+        save_checkpoint_record(records, f"{tag}_ssod_aggregate_{spec.aggregate_scope}", aggregate, "aggregate", round_idx=round_idx, variant=spec.name)
+    else:
+        assert pseudo_stats is not None
+        stats = dqa01.pseudo_stats_to_dqa_stats(pseudo_stats, num_classes=len(setup.BDD_NAMES))
+        aggregate = args.workspace_root / "checkpoints" / f"{tag}_{spec.name}_dqa_aggregate.pt"
+        state_path = args.workspace_root / "stats" / f"02_{spec.name}_dqa_state.json"
+        config = dqa01.dqa_config(args, len(setup.BDD_NAMES))
+        if not args.dry_run and not pl03.reusable_checkpoint(fedsto, aggregate, args.force):
+            _, dqa_state = dqa_v2.aggregate_checkpoints(
+                client_checkpoints=local_paths,
+                server_checkpoint=current_global,
+                output_checkpoint=aggregate,
+                stats=stats,
+                state_path=state_path,
+                config=config,
+                repo_root=REPO_ROOT,
+            )
+            fedsto.mark_checkpoint_protocol(aggregate, PROTOCOL_VERSION, f"{tag}_{spec.name}_dqa_aggregate")
+        elif state_path.exists():
+            dqa_state = json.loads(state_path.read_text(encoding="utf-8"))
+        save_checkpoint_record(records, f"{tag}_ssod_dqa_aggregate", aggregate, "aggregate", round_idx=round_idx, variant=spec.name)
+
+    repair_start = fedsto.GLOBAL_DIR / f"{tag}_{spec.name}_server_repair_start.pt"
+    repair = args.workspace_root / "checkpoints" / f"{tag}_{spec.name}_server_repair.pt"
+    if args.server_repair_epochs > 0:
+        if not args.dry_run and not pl03.reusable_checkpoint(fedsto, repair, args.force):
+            fedsto.make_start_checkpoint(aggregate, repair_start, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_server_repair_start")
+            cfg = write_target_consistency_repair_config(setup, spec, repair_start, args, clients, round_idx)
+            raw_repair = pl03.run_train(
+                setup,
+                fedsto,
+                cfg,
+                dry_run=args.dry_run,
+                gpus=args.gpus,
+                master_port=args.master_port + port_offset,
+            )
+            port_offset += 1
+            if not args.dry_run:
+                fedsto.mark_checkpoint_protocol(raw_repair, PROTOCOL_VERSION, f"{tag}_{spec.name}_server_repair_raw")
+                fedsto.make_start_checkpoint(raw_repair, repair, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_server_repair")
+                pl03.cleanup_training_artifacts(raw_repair, repair_start)
+        save_checkpoint_record(records, f"{tag}_server_repair", repair, "server_repair", round_idx=round_idx, variant=spec.name)
+        next_global = repair
+    else:
+        next_global = aggregate
+
+    return records, next_global, pseudo_stats, dqa_state, port_offset
 
 
 def split_gap_metrics(by_label_split: dict[tuple[str, str], dict[str, str]], label: str) -> dict[str, Any]:
@@ -296,8 +526,7 @@ def split_gap_metrics(by_label_split: dict[tuple[str, str], dict[str, str]], lab
 
 
 def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, last_n: int) -> list[dict[str, Any]]:
-    summary_path = workspace / "validation_reports" / "paper_protocol_eval_summary.csv"
-    rows = [row for row in read_csv(summary_path) if row.get("status") == "ok"]
+    rows = [row for row in read_csv(workspace / "validation_reports" / "paper_protocol_eval_summary.csv") if row.get("status") == "ok"]
     total_rows = [row for row in rows if row.get("split") in {"scene_daynight_total", "total"}]
     by_label = {row["checkpoint_label"]: row for row in total_rows}
     by_label_split = {(row["checkpoint_label"], row["split"]): row for row in rows}
@@ -306,7 +535,7 @@ def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, l
     warm_m95 = as_float(warm.get("map50_95")) if warm else None
 
     metric_rows: list[dict[str, Any]] = []
-    previous_repaired_m95: float | None = None
+    prev_m95: float | None = None
     for idx in range(1, rounds + 1):
         tag = round_tag(idx)
         agg_label = aggregate_label(spec, tag)
@@ -315,14 +544,11 @@ def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, l
         rep = by_label.get(rep_label)
         if not rep:
             continue
-
         agg_m50 = as_float(agg.get("map50")) if agg else None
         agg_m95 = as_float(agg.get("map50_95")) if agg else None
         rep_m50 = as_float(rep.get("map50"))
         rep_m95 = as_float(rep.get("map50_95"))
         gap = split_gap_metrics(by_label_split, rep_label)
-        aggregate_survival = "" if agg_m95 is None or warm_m95 is None else f"{agg_m95 - warm_m95:.6f}"
-
         metric_rows.append(
             {
                 "condition": spec.name,
@@ -330,19 +556,17 @@ def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, l
                 "round": idx,
                 "aggregate_map50": "" if agg_m50 is None else f"{agg_m50:.6f}",
                 "aggregate_map50_95": "" if agg_m95 is None else f"{agg_m95:.6f}",
-                "aggregate_survival_vs_warmup_map50_95": aggregate_survival,
+                "aggregate_survival_vs_warmup_map50_95": "" if agg_m95 is None or warm_m95 is None else f"{agg_m95 - warm_m95:.6f}",
                 "repaired_map50": "" if rep_m50 is None else f"{rep_m50:.6f}",
                 "repaired_map50_95": "" if rep_m95 is None else f"{rep_m95:.6f}",
                 "repair_gain_map50_95": "" if rep_m95 is None or agg_m95 is None else f"{rep_m95 - agg_m95:.6f}",
                 "retained_gain_map50_95": "" if rep_m95 is None or warm_m95 is None else f"{rep_m95 - warm_m95:.6f}",
-                "round_delta_map50_95": ""
-                if rep_m95 is None or previous_repaired_m95 is None
-                else f"{rep_m95 - previous_repaired_m95:.6f}",
+                "round_delta_map50_95": "" if rep_m95 is None or prev_m95 is None else f"{rep_m95 - prev_m95:.6f}",
                 **gap,
             }
         )
         if rep_m95 is not None:
-            previous_repaired_m95 = rep_m95
+            prev_m95 = rep_m95
 
     fieldnames = [
         "condition",
@@ -362,9 +586,8 @@ def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, l
         "night_avg_map50_95",
         "day_night_gap_map50_95",
     ]
-    metrics_path = workspace / "stats" / "01_1_condition_metrics.csv"
+    metrics_path = workspace / "stats" / "02_condition_metrics.csv"
     write_csv(metrics_path, metric_rows, fieldnames)
-
     repaired_values = [as_float(row["repaired_map50_95"]) for row in metric_rows]
     repaired_values = [value for value in repaired_values if value is not None]
     tail = repaired_values[-last_n:] if last_n > 0 else repaired_values
@@ -380,15 +603,25 @@ def write_condition_metrics(spec: ConditionSpec, workspace: Path, rounds: int, l
         "last_n_min_repaired_map50_95": float(np.min(tail)) if tail else None,
         "metrics_csv": str(metrics_path.resolve()),
     }
-    (workspace / "stats" / "01_1_condition_metrics_summary.json").write_text(
+    (workspace / "stats" / "02_condition_metrics_summary.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return metric_rows
 
 
-def apply_repair_only_reference(all_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def repair_only_reference_rows(root: Path, all_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     repair_rows = [row for row in all_rows if row.get("condition") == "repair_only"]
+    if repair_rows:
+        return repair_rows
+    baseline = root.parent / "01_0_repair_baseline_comparison" / "stats" / "01_0_all_condition_metrics.csv"
+    if baseline.exists():
+        return [row for row in read_csv(baseline) if row.get("condition") == "repair_only"]
+    return []
+
+
+def apply_repair_only_reference(root: Path, all_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    repair_rows = repair_only_reference_rows(root, all_rows)
     by_round = {str(row.get("round")): row for row in repair_rows}
     enriched = []
     for row in all_rows:
@@ -408,7 +641,7 @@ def apply_repair_only_reference(all_rows: list[dict[str, Any]]) -> list[dict[str
 
 
 def write_combined_metrics(root: Path, all_rows: list[dict[str, Any]]) -> None:
-    all_rows = apply_repair_only_reference(all_rows)
+    all_rows = apply_repair_only_reference(root, all_rows)
     fieldnames = [
         "condition",
         "mode",
@@ -430,9 +663,8 @@ def write_combined_metrics(root: Path, all_rows: list[dict[str, Any]]) -> None:
         "night_delta_vs_repair_only_map50_95",
         "day_night_gap_map50_95",
     ]
-    metrics_path = root / "stats" / "01_1_all_condition_metrics.csv"
+    metrics_path = root / "stats" / "02_all_condition_metrics.csv"
     write_csv(metrics_path, all_rows, fieldnames)
-
     final_rows = {}
     for row in all_rows:
         final_rows[str(row["condition"])] = row
@@ -442,10 +674,7 @@ def write_combined_metrics(root: Path, all_rows: list[dict[str, Any]]) -> None:
         "final_by_condition": final_rows,
         "condition_specs": {name: asdict(spec) for name, spec in CONDITION_SPECS.items()},
     }
-    (root / "stats" / "01_1_summary.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    (root / "stats" / "02_summary.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Saved: {metrics_path}")
 
 
@@ -457,20 +686,21 @@ def prepare_condition(args: argparse.Namespace, spec: ConditionSpec):
     manifest = setup_payload.get("manifest") if isinstance(setup_payload, dict) else {}
     clients = pl02.resolve_clients(args.clients, setup)
     warmup = pl02.copy_warmup_to_workspace(args.warmup_checkpoint, workspace, args.force)
-    return workspace, setup, fedsto, manifest, clients, spec.variant(), warmup
+    return workspace, setup, fedsto, manifest, clients, warmup
 
 
 def run_condition(args: argparse.Namespace, spec: ConditionSpec, condition_index: int) -> list[dict[str, Any]]:
     workspace = condition_workspace(args.workspace_root, spec.name)
-    completed_metrics = workspace / "stats" / "01_1_condition_metrics.csv"
-    completed_summary = workspace / "stats" / "01_1_condition_metrics_summary.json"
-    if args.evaluate and not args.force and completed_metrics.exists() and completed_summary.exists():
+    completed_metrics = workspace / "stats" / "02_condition_metrics.csv"
+    completed_summary = workspace / "stats" / "02_condition_metrics_summary.json"
+    if args.evaluate and not args.force and completed_metrics.exists() and completed_summary.exists() and read_csv(completed_metrics):
         print(f"\n\n######## condition={spec.name} ########")
         print(f"Reusing completed condition metrics: {completed_metrics}")
         return read_csv(completed_metrics)
 
-    workspace, setup, fedsto, manifest, clients, variant, warmup = prepare_condition(args, spec)
+    workspace, setup, fedsto, manifest, clients, warmup = prepare_condition(args, spec)
     cargs = condition_args(args, workspace, spec)
+    variant = pl03.Variant(spec.name, spec.train_scope, spec.aggregate_scope, 1, spec.client_lr0, 1, 1, spec.orthogonal_weight)
 
     print(f"\n\n######## condition={spec.name} mode={spec.mode} ########")
     print(f"Workspace: {workspace}")
@@ -501,52 +731,27 @@ def run_condition(args: argparse.Namespace, spec: ConditionSpec, condition_index
     dqa_history: list[dict[str, Any]] = []
     port_offset = condition_index * args.condition_port_stride
 
-    with patched_client_config(spec.loss_box):
-        for idx in range(1, args.rounds + 1):
-            if spec.mode == "repair_only":
-                round_records, current_global, port_offset = base01_0.run_repair_only_round(
-                    setup,
-                    fedsto,
-                    variant,
-                    current_global,
-                    cargs,
-                    idx,
-                    port_offset,
-                )
-            elif spec.mode == "fedavg":
-                round_records, current_global, pseudo_stats, port_offset = pl03.run_round(
-                    setup,
-                    fedsto,
-                    variant,
-                    current_global,
-                    cargs,
-                    clients,
-                    idx,
-                    port_offset,
-                )
-                pseudo_history.append(pseudo_stats)
-            elif spec.mode == "dqa":
-                round_records, current_global, pseudo_stats, dqa_state, port_offset = dqa01.run_round(
-                    setup,
-                    fedsto,
-                    variant,
-                    current_global,
-                    cargs,
-                    clients,
-                    idx,
-                    port_offset,
-                )
-                pseudo_history.append(pseudo_stats)
-                dqa_history.append({"round": idx, "state": dqa_state})
-            else:
-                raise ValueError(spec.mode)
-
-            records.extend(normalize_records(round_records, spec.name))
-            write_csv(
-                workspace / "stats" / "01_1_checkpoints.csv",
-                records,
-                ["condition", "label", "kind", "round", "client", "variant", "path"],
+    for idx in range(1, args.rounds + 1):
+        if spec.mode == "repair_only":
+            round_records, current_global, port_offset = base01_0.run_repair_only_round(
+                setup, fedsto, variant, current_global, cargs, idx, port_offset
             )
+            pseudo_stats = None
+            dqa_state = None
+        else:
+            round_records, current_global, pseudo_stats, dqa_state, port_offset = run_ssod_round(
+                setup, fedsto, spec, current_global, cargs, clients, idx, port_offset
+            )
+        records.extend(normalize_records(round_records, spec.name))
+        if pseudo_stats is not None:
+            pseudo_history.append(pseudo_stats)
+        if dqa_state is not None:
+            dqa_history.append({"round": idx, "state": dqa_state})
+        write_csv(
+            workspace / "stats" / "02_checkpoints.csv",
+            records,
+            ["condition", "label", "kind", "round", "client", "variant", "path"],
+        )
 
     manifest_payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -562,12 +767,9 @@ def run_condition(args: argparse.Namespace, spec: ConditionSpec, condition_index
         "pseudo_history": pseudo_history,
         "dqa_history": dqa_history,
         "checkpoints": records,
-        "dqa_config": asdict(dqa01.dqa_config(cargs, len(setup.BDD_NAMES))) if spec.mode == "dqa" else None,
+        "dqa_config": asdict(dqa01.dqa_config(cargs, len(setup.BDD_NAMES))) if spec.mode == "ssod_dqa" else None,
     }
-    (workspace / "stats" / "01_1_manifest.json").write_text(
-        json.dumps(manifest_payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    (workspace / "stats" / "02_manifest.json").write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if args.evaluate:
         base01_0.run_evaluation(cargs, records)
@@ -583,22 +785,17 @@ def notify(args: argparse.Namespace, message: str, *, title: str, status: str | 
             "workspace": str(args.workspace_root.resolve()),
             "conditions": args.conditions,
             "rounds": args.rounds,
-            "max_images_per_client": args.max_images_per_client,
+            "client_limit": args.client_limit,
         }
         if status:
             context["status"] = status
         if error:
             context["error"] = error[:500]
-        summary_path = args.workspace_root / "stats" / "01_1_summary.json"
+        summary_path = args.workspace_root / "stats" / "02_summary.json"
         if summary_path.exists():
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             context["summary"] = str(summary.get("final_by_condition", {}))[:900]
-        result = notify_discord(
-            message,
-            title=title,
-            context=context,
-            fail_silently=True,
-        )
+        result = notify_discord(message, title=title, context=context, fail_silently=True)
         print(result)
     except Exception as exc:  # noqa: BLE001
         print(f"Discord notification skipped: {exc}")
@@ -618,16 +815,17 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace-root", type=Path, default=PROJECT_ROOT / "output" / "01_1_dqa_diagnostic_sweep")
+    parser.add_argument("--workspace-root", type=Path, default=PROJECT_ROOT / "output" / "02_target_consistency_repair_dqa")
     parser.add_argument("--warmup-checkpoint", type=Path, default=REPO_ROOT / "pseudogt_learnability" / "checkpoints" / "round000_warmup.pt")
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
     parser.add_argument("--client-limit", type=int, default=1500)
     parser.add_argument("--clients", default="all")
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--client-epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=160)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--gpus", type=int, default=2)
-    parser.add_argument("--master-port", type=int, default=30941)
+    parser.add_argument("--master-port", type=int, default=31041)
     parser.add_argument("--condition-port-stride", type=int, default=100)
     parser.add_argument("--device", default="")
     parser.add_argument("--server-repair-epochs", type=int, default=1)
@@ -682,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
     do_start_notify = args.notify or args.notify_start
     do_end_notify = args.notify or args.notify_end
     if do_start_notify:
-        notify(args, "Scene-Daynight DQA 01_1 started.", title="Scene-Daynight DQA 01_1 start")
+        notify(args, "Scene-Daynight DQA 02 started.", title="Scene-Daynight DQA 02 start")
 
     status = "success"
     error: str | None = None
@@ -696,8 +894,8 @@ def main(argv: list[str] | None = None) -> int:
         if do_end_notify:
             notify(
                 args,
-                f"Scene-Daynight DQA 01_1 finished with status={status}.",
-                title="Scene-Daynight DQA 01_1 finish",
+                f"Scene-Daynight DQA 02 finished with status={status}.",
+                title="Scene-Daynight DQA 02 finish",
                 status=status,
                 error=error,
             )

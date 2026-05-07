@@ -5,6 +5,10 @@ If fixed pseudoGT supervision still cannot beat source repair, 01_2 pivots to a
 more FedSTO-faithful client update: clients train with EfficientTeacher SSOD on
 their unlabeled target images.  Stable pseudo boxes are generated only as a DQA
 quality signal for aggregation, not as fixed training labels.
+
+The 01_0 notebook already contains the repair-only control.  The SSOD FedAvg
+control remains callable by explicit condition name, but the default `all`
+condition runs only SSOD-DQA improvement variants.
 """
 
 from __future__ import annotations
@@ -85,7 +89,7 @@ CONDITION_SPECS: dict[str, ConditionSpec] = {
         name="ssod_dqa_head",
         mode="ssod_dqa",
         note="Head-only SSOD target adaptation with weak bbox loss.",
-        train_scope="head",
+        train_scope="neck_head",
         client_lr0=0.0015,
         ssod_box_loss_weight=0.01,
         dqa_min_server_alpha=0.70,
@@ -107,7 +111,7 @@ CONDITION_SPECS: dict[str, ConditionSpec] = {
     ),
 }
 
-DEFAULT_CONDITIONS = ("repair_only", "ssod_fedavg", "ssod_dqa", "ssod_dqa_head", "ssod_dqa_nonbackbone")
+DEFAULT_CONDITIONS = ("ssod_dqa", "ssod_dqa_head", "ssod_dqa_nonbackbone")
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -167,7 +171,9 @@ def condition_args(args: argparse.Namespace, workspace: Path, spec: ConditionSpe
 
 
 def config_device(args: argparse.Namespace) -> str:
-    return "" if args.gpus > 1 else args.device
+    # Keep EfficientTeacher's training config on the default string-typed device
+    # field. Pseudo-labeling/evaluation still use args.device directly.
+    return ""
 
 
 def write_ssod_client_config(
@@ -307,6 +313,7 @@ def run_ssod_round(
             if not args.dry_run:
                 fedsto.mark_checkpoint_protocol(raw_ckpt, PROTOCOL_VERSION, f"{tag}_{spec.name}_{client_tag}_raw")
                 fedsto.make_start_checkpoint(raw_ckpt, final_ckpt, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_{client_tag}")
+                pl03.cleanup_training_artifacts(raw_ckpt, start)
 
         local_paths.append(final_ckpt)
         save_checkpoint_record(records, f"{tag}_{client_tag}", final_ckpt, "client", round_idx=round_idx, client=client_tag, variant=spec.name)
@@ -357,6 +364,7 @@ def run_ssod_round(
             if not args.dry_run:
                 fedsto.mark_checkpoint_protocol(raw_repair, PROTOCOL_VERSION, f"{tag}_{spec.name}_server_repair_raw")
                 fedsto.make_start_checkpoint(raw_repair, repair, protocol=PROTOCOL_VERSION, stage=f"{tag}_{spec.name}_server_repair")
+                pl03.cleanup_training_artifacts(raw_repair, repair_start)
         save_checkpoint_record(records, f"{tag}_server_repair", repair, "server_repair", round_idx=round_idx, variant=spec.name)
         next_global = repair
     else:
@@ -677,19 +685,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workspace-root", type=Path, default=PROJECT_ROOT / "output" / "01_2_ssod_pivot")
     parser.add_argument("--warmup-checkpoint", type=Path, default=REPO_ROOT / "pseudogt_learnability" / "checkpoints" / "round000_warmup.pt")
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
-    parser.add_argument("--client-limit", type=int, default=800)
+    parser.add_argument("--client-limit", type=int, default=1500)
     parser.add_argument("--clients", default="all")
-    parser.add_argument("--rounds", type=int, default=2)
+    parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--client-epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--gpus", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=160)
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--gpus", type=int, default=2)
     parser.add_argument("--master-port", type=int, default=31041)
     parser.add_argument("--condition-port-stride", type=int, default=100)
-    parser.add_argument("--device", default="0")
+    parser.add_argument("--device", default="")
     parser.add_argument("--server-repair-epochs", type=int, default=1)
     parser.add_argument("--server-repair-lr", type=float, default=0.0008)
-    parser.add_argument("--last-n", type=int, default=2)
+    parser.add_argument("--last-n", type=int, default=3)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--conf-thres", type=float, default=0.25)
     parser.add_argument("--nms-iou-thres", type=float, default=0.65)
@@ -699,7 +707,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-score", type=float, default=0.28)
     parser.add_argument("--max-det", type=int, default=300)
     parser.add_argument("--max-boxes-per-image", type=int, default=12)
-    parser.add_argument("--max-images-per-client", type=int, default=800)
+    parser.add_argument("--max-images-per-client", type=int, default=0)
     parser.add_argument("--max-class-fraction", type=float, default=0.45)
     parser.add_argument("--min-class-keep", type=int, default=250)
     parser.add_argument("--progress-every", type=int, default=250)

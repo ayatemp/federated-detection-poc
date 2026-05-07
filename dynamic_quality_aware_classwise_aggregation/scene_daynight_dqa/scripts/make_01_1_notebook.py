@@ -31,17 +31,14 @@ def code(source: str) -> dict:
 cells = [
     md(
         """
-        # 01_1 DQA Diagnostic Sweep
+        # 01_1 DQA Improvement Sweep
 
         This notebook is a diagnostic follow-up to `01_0`.
 
         Goal:
-        - keep `repair_only` as the baseline
-        - test whether DQA can beat repair-only when client updates are less source-dominated
-        - separate three claims:
-          - pseudoGT full updates can be destructive
-          - DQA can preserve the aggregate before repair
-          - constrained target adaptation may improve worst/night splits
+        - run only the DQA improvement candidates by default
+        - test whether DQA improves over the already-measured `01_0` controls
+        - avoid re-running comparison-only conditions unless explicitly requested
 
         The runner sends Discord notifications at start and finish when `--notify` is enabled.
         """
@@ -70,20 +67,23 @@ cells = [
         """
         ## Conditions
 
-        Default diagnostic conditions:
+        Default improvement conditions:
 
         | condition | purpose |
         |---|---|
-        | `repair_only` | source repair baseline |
         | `dqa_current` | 01_0-style source-heavy DQA |
         | `dqa_source_light` | reduce source dominance |
         | `dqa_target_double` | target-heavy pseudoGT with softer DQA anchor |
         | `dqa_head_lowbox` | head-only target adaptation, weak bbox loss |
         | `dqa_nonbackbone_lowbox` | neck/head adaptation, weak bbox loss |
-        | `fedavg_target_double` | same target-heavy recipe without DQA |
 
-        For a full run, set `MAX_IMAGES_PER_CLIENT = 0` and `ROUNDS = 3`.
-        The default below is intentionally safer and faster after the previous DDP SIGTERM.
+        `repair_only` and `fedavg_target_double` remain callable by explicit
+        condition name, but they are not included in the notebook default.  The
+        comparison baseline should come from `01_0`.
+
+        The default below follows the 01_0 full-run resource setting:
+        3 rounds, all 1500 target images per client, 2 GPUs, batch size 160,
+        and 8 workers.
         """
     ),
     code(
@@ -94,10 +94,12 @@ cells = [
         runner_path = PROJECT_ROOT / "scripts" / "run_scene_daynight_dqa_01_1.py"
         spec = importlib.util.spec_from_file_location("run_scene_daynight_dqa_01_1", runner_path)
         runner = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = runner
         spec.loader.exec_module(runner)
 
         rows = []
-        for name, cond in runner.CONDITION_SPECS.items():
+        for name in runner.DEFAULT_CONDITIONS:
+            cond = runner.CONDITION_SPECS[name]
             rows.append({
                 "condition": name,
                 "mode": cond.mode,
@@ -117,6 +119,7 @@ cells = [
         ## Setup Only
 
         Run this first if you only want to build the six client/eval lists and confirm paths.
+        `all` resolves to the DQA improvement conditions only.
         """
     ),
     code(
@@ -134,25 +137,25 @@ cells = [
     ),
     md(
         """
-        ## Run Diagnostic Sweep
+        ## Run DQA Improvement Sweep
 
-        Default: 2 rounds, max 800 target images per client, 1 GPU.
+        Default: 3 rounds, all target images per client, 2 GPUs.
 
         This is meant to answer:
-        - Does any DQA variant beat `repair_only` after repair?
-        - Does DQA preserve aggregate mAP better than FedAvg?
+        - Which DQA variant is the best improvement candidate?
         - Do target-heavy / low-box variants improve night or worst split?
+        - Does the aggregate survive before repair?
         """
     ),
     code(
         """
-        ROUNDS = 2
-        CONDITIONS = "all"
-        MAX_IMAGES_PER_CLIENT = 800  # set 0 for full 1500 images/client
-        BATCH_SIZE = 80
-        WORKERS = 4
-        GPUS = 1
-        DEVICE = "0"
+        ROUNDS = 3
+        CONDITIONS = "all"  # DQA-only defaults; explicit controls are still supported
+        MAX_IMAGES_PER_CLIENT = 0
+        BATCH_SIZE = 160
+        WORKERS = 8
+        GPUS = 2
+        DEVICE = ""
         EVAL_CLIENTS = False
 
         cmd = [
@@ -192,7 +195,7 @@ cells = [
             print("No combined metrics yet:", metrics_csv)
         """
     ),
-    md("## Final-Round Comparison"),
+    md("## Final-Round Metrics"),
     code(
         """
         if metrics_csv.exists():

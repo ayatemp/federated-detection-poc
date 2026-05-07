@@ -39,6 +39,20 @@ ET_ROOT = NAV_ROOT / "vendor" / "efficientteacher"
 PROTOCOL_VERSION = "pseudogt_learnability_02_stable_aug_v1"
 
 
+def unwrap_detector_prediction(pred: Any) -> Any:
+    """Return the tensor prediction from detector outputs with auxiliary data.
+
+    EfficientTeacher's SSOD checkpoints can return nested tuples such as
+    `(prediction, features)` or `((prediction, train_outputs), features)`.
+    Stable pseudo-label generation only needs the prediction tensor.
+    """
+    while isinstance(pred, (tuple, list)):
+        if not pred:
+            return pred
+        pred = pred[0]
+    return pred
+
+
 @dataclass(frozen=True)
 class Variant:
     name: str
@@ -176,7 +190,9 @@ def resolve_clients(raw: str, setup) -> list[dict[str, Any]]:
 
 
 def config_device(args: argparse.Namespace) -> str:
-    return "" if args.gpus > 1 else args.device
+    # EfficientTeacher training configs should keep the default string type and
+    # let select_device choose the visible GPU.
+    return ""
 
 
 def read_image_list(path: Path, max_images: int) -> list[Path]:
@@ -271,9 +287,7 @@ class StableAugPseudoLabeler:
         tensor /= 255.0
         tensor = tensor.unsqueeze(0)
 
-        pred = self.model(tensor, augment=False)
-        if isinstance(pred, (tuple, list)):
-            pred = pred[0]
+        pred = unwrap_detector_prediction(self.model(tensor, augment=False))
         detections = non_max_suppression(
             pred,
             self.conf_thres,

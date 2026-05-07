@@ -34,7 +34,7 @@ cells = [
         # 01_2 SSOD Pivot DQA
 
         This notebook is the fallback plan if `01_1` still cannot make DQA beat
-        `repair_only`.
+        the `01_0` repair-only baseline.
 
         Hypothesis:
         fixed pseudoGT is too brittle as supervised bbox training data.  Instead,
@@ -45,8 +45,11 @@ cells = [
         Claims this notebook can test:
         - fixed pseudoGT failure does not imply target data is useless
         - SSOD client updates may extract target/domain signal more safely
-        - DQA should protect the aggregate better than SSOD FedAvg
         - worst/night splits are the real target-domain test
+
+        By default this notebook runs only SSOD-DQA improvement candidates.
+        `repair_only` and `ssod_fedavg` remain callable by explicit condition
+        name, but they are not included in the default run.
         """
     ),
     code(
@@ -68,7 +71,7 @@ cells = [
         print("WORKSPACE", WORKSPACE)
         """
     ),
-    md("## Conditions"),
+    md("## Default Improvement Conditions"),
     code(
         """
         import importlib.util
@@ -77,10 +80,12 @@ cells = [
         runner_path = PROJECT_ROOT / "scripts" / "run_scene_daynight_dqa_01_2.py"
         spec = importlib.util.spec_from_file_location("run_scene_daynight_dqa_01_2", runner_path)
         runner = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = runner
         spec.loader.exec_module(runner)
 
         rows = []
-        for name, cond in runner.CONDITION_SPECS.items():
+        for name in runner.DEFAULT_CONDITIONS:
+            cond = runner.CONDITION_SPECS[name]
             rows.append({
                 "condition": name,
                 "mode": cond.mode,
@@ -97,7 +102,7 @@ cells = [
     md("## Setup Only"),
     code(
         """
-        CLIENT_LIMIT = 800
+        CLIENT_LIMIT = 1500
         subprocess.run([
             sys.executable,
             "scripts/run_scene_daynight_dqa_01_2.py",
@@ -112,24 +117,20 @@ cells = [
         """
         ## Run SSOD Pivot
 
-        Default is intentionally conservative: 2 rounds, 800 images/client,
-        1 GPU, batch size 32.  This avoids the DDP SIGTERM behavior from 01_0.
-
-        Full condition:
-        - set `CLIENT_LIMIT = 1500`
-        - set `MAX_IMAGES_PER_CLIENT = 1500`
-        - set `ROUNDS = 3`
+        Default follows the 01_0 full-run resource setting:
+        3 rounds, all 1500 target images per client, 2 GPUs, batch size 160,
+        and 8 workers.
         """
     ),
     code(
         """
-        ROUNDS = 2
-        CONDITIONS = "all"
-        MAX_IMAGES_PER_CLIENT = 800
-        BATCH_SIZE = 32
-        WORKERS = 4
-        GPUS = 1
-        DEVICE = "0"
+        ROUNDS = 3
+        CONDITIONS = "all"  # SSOD-DQA-only defaults; explicit controls are still supported
+        MAX_IMAGES_PER_CLIENT = 0
+        BATCH_SIZE = 160
+        WORKERS = 8
+        GPUS = 2
+        DEVICE = ""
         EVAL_CLIENTS = False
 
         cmd = [
@@ -169,7 +170,7 @@ cells = [
             print("No combined metrics yet:", metrics_csv)
         """
     ),
-    md("## Final-Round Comparison"),
+    md("## Final-Round Metrics"),
     code(
         """
         if metrics_csv.exists():
@@ -258,9 +259,9 @@ cells = [
             ]])
 
             print("Claim guide:")
-            print("- SSOD FedAvg below DQA aggregate => DQA protects target client updates.")
-            print("- Any SSOD DQA repaired > repair_only => target data is useful when trained as SSOD.")
-            print("- Night/worst delta > 0 => DQA helps domain/client weakness even if total mAP ties.")
+            print("- Compare these rows against the 01_0 repair-only baseline.")
+            print("- Repaired mAP above 01_0 => target data is useful when trained as SSOD-DQA.")
+            print("- Night/worst split improvement => DQA helps domain/client weakness even if total mAP ties.")
         """
     ),
 ]

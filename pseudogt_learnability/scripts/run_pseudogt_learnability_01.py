@@ -188,7 +188,10 @@ def copy_warmup_to_workspace(source: Path, workspace: Path, force: bool) -> Path
 
 
 def config_device(args: argparse.Namespace) -> str:
-    return "" if args.gpus > 1 else args.device
+    # EfficientTeacher's yacs config expects this field to keep the default
+    # string type. Passing "0" from the notebook can be coerced as an int during
+    # config merge on some paths, so leave training device selection automatic.
+    return ""
 
 
 def apply_common_training_hyp(cfg: dict, lr0: float) -> None:

@@ -181,6 +181,7 @@ def run_round(
             if not args.dry_run:
                 fedsto.mark_checkpoint_protocol(raw_ckpt, PROTOCOL_VERSION, f"{tag}_{client_tag}_raw")
                 fedsto.make_start_checkpoint(raw_ckpt, final_ckpt, protocol=PROTOCOL_VERSION, stage=f"{tag}_{client_tag}")
+                pl03.cleanup_training_artifacts(raw_ckpt, start)
         local_paths.append(final_ckpt)
         save_checkpoint_record(records, f"{tag}_{client_tag}", final_ckpt, "client", round_idx=round_idx, client=client_tag)
 
@@ -222,6 +223,7 @@ def run_round(
             if not args.dry_run:
                 fedsto.mark_checkpoint_protocol(raw_repair, PROTOCOL_VERSION, f"{tag}_server_repair_raw")
                 fedsto.make_start_checkpoint(raw_repair, repair, protocol=PROTOCOL_VERSION, stage=f"{tag}_server_repair")
+                pl03.cleanup_training_artifacts(raw_repair, repair_start)
         save_checkpoint_record(records, f"{tag}_server_repair", repair, "server_repair", round_idx=round_idx)
         next_global = repair
     else:

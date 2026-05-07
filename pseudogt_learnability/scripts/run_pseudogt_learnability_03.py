@@ -107,7 +107,10 @@ def resolve_variant(raw: str, epochs_override: int | None) -> Variant:
 
 
 def config_device(args: argparse.Namespace) -> str:
-    return "" if args.gpus > 1 else args.device
+    # EfficientTeacher's config schema keeps `device` as a string default.
+    # Leaving it empty lets select_device pick the visible GPU and avoids yacs
+    # type mismatches when notebooks pass DEVICE="0".
+    return ""
 
 
 def repeated_expr(path: Path, repeat: int) -> str:
@@ -436,6 +439,33 @@ def reusable_checkpoint(fedsto, path: Path, force: bool) -> bool:
     return False
 
 
+def cleanup_training_artifacts(raw_ckpt: Path | None, start_ckpt: Path | None = None) -> tuple[int, int]:
+    """Remove bulky per-run training artifacts after the compact checkpoint is copied."""
+    removed = 0
+    freed = 0
+    candidates: list[Path] = []
+    if raw_ckpt is not None:
+        candidates.extend([raw_ckpt.parent / "best.pt", raw_ckpt.parent / "last.pt"])
+    if start_ckpt is not None:
+        candidates.append(start_ckpt)
+
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            continue
+        path.unlink()
+        removed += 1
+        freed += size
+    if removed:
+        print(f"Cleaned {removed} training artifact(s), freed {freed / (1024 ** 3):.2f} GiB")
+    return removed, freed
+
+
 def save_checkpoint_record(
     records: list[dict[str, str]],
     label: str,
@@ -508,6 +538,7 @@ def run_round(
                     protocol=PROTOCOL_VERSION,
                     stage=f"{round_tag}_{variant.name}_{client_tag}",
                 )
+                cleanup_training_artifacts(raw_ckpt, start)
 
         local_paths.append(final_ckpt)
         save_checkpoint_record(records, f"{round_tag}_{client_tag}", final_ckpt, "client", variant.name, client_tag, round_idx)
@@ -548,6 +579,7 @@ def run_round(
                     protocol=PROTOCOL_VERSION,
                     stage=f"{round_tag}_{variant.name}_server_repair",
                 )
+                cleanup_training_artifacts(repair_raw, repair_start)
         save_checkpoint_record(records, f"{round_tag}_server_repair", repair, "server_repair", variant.name, round_idx=round_idx)
         next_global = repair
     else:
