@@ -334,6 +334,8 @@ class DetectMultiBackend(nn.Module):
         from export import export_formats
         from utils.downloads import is_url
         print("parse model_type: ", p)
+        if str(p).endswith('.routed.json'):
+            return [True] + [False] * 13
         sf = list(export_formats().Suffix)  # export suffixes
         if not is_url(p, check=False):
             check_suffix(p, sf)  # checks

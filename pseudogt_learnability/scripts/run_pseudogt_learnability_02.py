@@ -104,6 +104,7 @@ class BoxPrediction:
     conf: float
     xyxy: tuple[float, float, float, float]
     view: str
+    model: str = ""
 
 
 @dataclass
@@ -255,7 +256,16 @@ def clipped_yolo_line(stable: StableBox, width: int, height: int) -> str | None:
 
 
 class StableAugPseudoLabeler:
-    def __init__(self, weights: Path, device: str, imgsz: int, conf_thres: float, iou_thres: float, max_det: int):
+    def __init__(
+        self,
+        weights: Path | list[Path],
+        device: str,
+        imgsz: int,
+        conf_thres: float,
+        iou_thres: float,
+        max_det: int,
+        separate_weight_views: bool = False,
+    ):
         add_nav_path()
         from models.backbone.experimental import attempt_load
         from utils.general import check_img_size
@@ -266,16 +276,42 @@ class StableAugPseudoLabeler:
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
         self.max_det = max_det
-        self.model = attempt_load(str(weights), device=self.device, fuse=True)
-        self.stride = int(self.model.stride.max())
+        self.model_views: list[tuple[str, Any]] = []
+        if isinstance(weights, (list, tuple)) and separate_weight_views:
+            for idx, weight in enumerate(weights):
+                model = attempt_load(str(Path(weight)), device=self.device, fuse=True)
+                model.eval()
+                if self.half:
+                    model.half()
+                self.model_views.append((f"model{idx}", model))
+            self.model = self.model_views[0][1]
+            self.stride = max(int(model.stride.max()) for _, model in self.model_views)
+        else:
+            if isinstance(weights, (list, tuple)):
+                load_weights = [str(Path(weight)) for weight in weights]
+            else:
+                load_weights = str(weights)
+            self.model = attempt_load(load_weights, device=self.device, fuse=True)
+            self.stride = int(self.model.stride.max())
+            self.model.eval()
+            if self.half:
+                self.model.half()
         self.imgsz = check_img_size(imgsz, s=self.stride)
-        self.model.eval()
-        if self.half:
-            self.model.half()
         if self.device.type != "cpu":
-            self.model(torch.zeros(1, 3, self.imgsz, self.imgsz).to(self.device).type_as(next(self.model.parameters())))
+            warmup = torch.zeros(1, 3, self.imgsz, self.imgsz).to(self.device)
+            for _, model in (self.model_views or [("ensemble", self.model)]):
+                model(warmup.type_as(next(model.parameters())))
 
-    def _predict_view(self, image_bgr: np.ndarray, view: str, original_width: int) -> list[BoxPrediction]:
+    def _predict_view(
+        self,
+        image_bgr: np.ndarray,
+        view: str,
+        original_width: int,
+        *,
+        model: Any | None = None,
+        model_name: str = "",
+        flip_back: bool = False,
+    ) -> list[BoxPrediction]:
         from utils.augmentations import letterbox
         from utils.general import non_max_suppression, scale_coords
 
@@ -287,7 +323,8 @@ class StableAugPseudoLabeler:
         tensor /= 255.0
         tensor = tensor.unsqueeze(0)
 
-        pred = unwrap_detector_prediction(self.model(tensor, augment=False))
+        detector = model if model is not None else self.model
+        pred = unwrap_detector_prediction(detector(tensor, augment=False))
         detections = non_max_suppression(
             pred,
             self.conf_thres,
@@ -301,7 +338,7 @@ class StableAugPseudoLabeler:
             return []
         detections[:, :4] = scale_coords(tensor.shape[2:], detections[:, :4], image_bgr.shape).round()
         det_np = detections.detach().float().cpu().numpy()
-        if view == "hflip":
+        if flip_back:
             x1 = det_np[:, 0].copy()
             x2 = det_np[:, 2].copy()
             det_np[:, 0] = original_width - x2
@@ -316,6 +353,7 @@ class StableAugPseudoLabeler:
                     conf=float(conf),
                     xyxy=(float(x1), float(y1), float(x2), float(y2)),
                     view=view,
+                    model=model_name,
                 )
             )
         return outputs
@@ -326,9 +364,30 @@ class StableAugPseudoLabeler:
         if image is None:
             raise RuntimeError(f"Could not read image: {image_path}")
         height, width = image.shape[:2]
-        predictions = self._predict_view(image, "identity", width)
         flipped = cv2.flip(image, 1)
-        predictions.extend(self._predict_view(flipped, "hflip", width))
+        predictions: list[BoxPrediction] = []
+        model_views = self.model_views or [("", self.model)]
+        for model_name, model in model_views:
+            prefix = f"{model_name}:" if model_name else ""
+            predictions.extend(
+                self._predict_view(
+                    image,
+                    f"{prefix}identity",
+                    width,
+                    model=model,
+                    model_name=model_name,
+                )
+            )
+            predictions.extend(
+                self._predict_view(
+                    flipped,
+                    f"{prefix}hflip",
+                    width,
+                    model=model,
+                    model_name=model_name,
+                    flip_back=True,
+                )
+            )
         return predictions, (width, height)
 
 
@@ -337,6 +396,7 @@ def cluster_stable_boxes(
     *,
     match_iou: float,
     min_views: int,
+    min_models: int = 0,
     min_stability: float,
     min_score: float,
     max_boxes_per_image: int,
@@ -361,6 +421,9 @@ def cluster_stable_boxes(
             group = [cls_preds[i] for i in group_indices]
             views = sorted({item.view for item in group})
             if len(views) < min_views:
+                continue
+            models = sorted({item.model for item in group if item.model})
+            if min_models > 0 and len(models) < min_models:
                 continue
             group_boxes = np.array([item.xyxy for item in group], dtype=np.float32)
             group_confs = np.array([item.conf for item in group], dtype=np.float32)

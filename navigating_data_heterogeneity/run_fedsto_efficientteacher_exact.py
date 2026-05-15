@@ -367,6 +367,27 @@ def _state_dict(ckpt: dict, key: str = "model") -> dict:
     return ckpt[key].float().state_dict()
 
 
+def _checkpoint_teacher_model(ckpt: dict):
+    """Return the best teacher model stored in an EfficientTeacher checkpoint.
+
+    EfficientTeacher strips training checkpoints by folding EMA into ``model``
+    and setting ``ema`` to None.  FedSTO still needs a persistent local teacher,
+    so a stripped checkpoint's ``model`` is the correct fallback.
+    """
+
+    return ckpt.get("ema") if ckpt.get("ema") is not None else ckpt.get("model")
+
+
+def _checkpoint_updates(ckpt: dict, fallback: int = 0) -> int:
+    updates = ckpt.get("updates")
+    if updates is None:
+        return fallback
+    try:
+        return int(updates)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _is_backbone_key(key: str) -> bool:
     lowered = key.lower()
     return "backbone" in lowered
@@ -384,11 +405,15 @@ def make_start_checkpoint(
     base = copy.deepcopy(base)
     base["epoch"] = -1
     base["optimizer"] = None
+    base["updates"] = _checkpoint_updates(base)
     if local_ema_ckpt and local_ema_ckpt.exists():
         local = _load(local_ema_ckpt)
-        if local.get("ema") is not None:
-            base["ema"] = copy.deepcopy(local["ema"])
-            base["updates"] = local.get("updates", base.get("updates", 0))
+        teacher = _checkpoint_teacher_model(local)
+        if teacher is not None:
+            base["ema"] = copy.deepcopy(teacher)
+            base["updates"] = _checkpoint_updates(local, _checkpoint_updates(base))
+    elif base.get("ema") is None and base.get("model") is not None:
+        base["ema"] = copy.deepcopy(base["model"])
     if protocol is not None:
         base["fedsto_protocol"] = protocol
     if stage is not None:

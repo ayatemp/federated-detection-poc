@@ -48,7 +48,13 @@ from utils.self_supervised_utils import check_pseudo_label_with_gt, check_pseudo
 from models.detector.yolo_ssod import Model
 import torchvision
 import copy
-from utils.fedsto_regularization import apply_fedsto_train_scope, class_skew_head_regularization, spectral_orthogonal_regularization
+from utils.fedsto_regularization import (
+    apply_fedsto_train_scope,
+    class_skew_head_regularization,
+    clear_latent_moe_router_cache,
+    latent_moe_router_regularization,
+    spectral_orthogonal_regularization,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -888,8 +894,13 @@ class SSODTrainer(Trainer):
                 print(f'freezing {k}')
                 v.requires_grad = False
         apply_fedsto_train_scope(self.model, cfg.FedSTO.train_scope)
+        clear_latent_moe_router_cache(self.model)
         # EMA
-        self.ema = ModelEMA(self.model)        
+        self.ema = ModelEMA(
+            self.model,
+            decay=float(self.cfg.SSOD.ema_rate),
+            ramp=bool(self.cfg.SSOD.cosine_ema),
+        )
         if self.cfg.hyp.burn_epochs > 0:
             self.semi_ema = None
             # self.ema = ModelEMA(self.model, decay=self.cfg.SSOD.ema_rate)
@@ -1241,7 +1252,17 @@ class SSODTrainer(Trainer):
         )
         if class_skew_loss is not None:
             loss = loss + class_skew_loss
+        latent_moe_loss = latent_moe_router_regularization(
+            self.model,
+            self.cfg.LatentMoE.balance_weight,
+            self.cfg.LatentMoE.entropy_weight,
+            getattr(self.cfg.LatentMoE, "specialization_weight", 0.0),
+            getattr(self.cfg.LatentMoE, "specialization_target", -1),
+        )
+        if latent_moe_loss is not None:
+            loss = loss + latent_moe_loss
         self.scaler.scale(loss).backward()
+        clear_latent_moe_router_cache(self.model)
                 
         if self.fixed_accumulate:
             self.accumulate = 1

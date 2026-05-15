@@ -317,6 +317,17 @@ _C.ClassSkewFedSTO.orthogonal_weight = 0.0
 _C.ClassSkewFedSTO.srip_weight = 0.0
 _C.ClassSkewFedSTO.residual_weight = 0.0
 
+_C.LatentMoE = CN()
+_C.LatentMoE.enabled = False
+_C.LatentMoE.num_experts = 4
+_C.LatentMoE.top_k = 2
+_C.LatentMoE.temperature = 1.0
+_C.LatentMoE.scale = 1.0
+_C.LatentMoE.balance_weight = 0.0
+_C.LatentMoE.entropy_weight = 0.0
+_C.LatentMoE.specialization_weight = 0.0
+_C.LatentMoE.specialization_target = -1
+
 # NAS
 _C.NAS = CN()
 _C.NAS.use_nas = False

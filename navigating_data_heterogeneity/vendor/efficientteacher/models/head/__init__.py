@@ -1,7 +1,7 @@
 import copy
 
 
-from .yolov5_head import Detect
+from .yolov5_head import Detect, LatentMoEDetect
 from .yolov7_head import IDetect
 from .yolov8_head import YoloV8Detect
 from .yolox_head import YoloXDetect
@@ -17,6 +17,8 @@ def build_head(cfg):
         return YoloXDetect(head_cfg)
     elif name == "YoloV5":
         return Detect(head_cfg)
+    elif name in ["LatentMoEYoloV5", "DqaMoEYoloV5", "LatentMoE"]:
+        return LatentMoEDetect(head_cfg)
     elif name == "YoloV6":
         return YoloV6Detect(head_cfg)
     elif name == "YoloV7":

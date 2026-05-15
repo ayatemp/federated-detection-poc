@@ -172,3 +172,100 @@ class Detect(nn.Module):
         grid = torch.stack((xv, yv), 2).expand(shape) - 0.5  # add grid offset, i.e. y = 2.0 * x - 0.5
         anchor_grid = (anchors[i] * stride[i]).view((1, na, 1, 1, 2)).expand(shape)
         return grid, anchor_grid
+
+
+class LatentMoEDetect(Detect):
+    """YOLOv5 head with anonymous latent experts and a learned spatial router.
+
+    The shared head stays active for every prediction. The MoE branch learns a
+    residual correction per feature location, so experts are not pre-assigned to
+    fixed concepts such as day/night/client id.
+    """
+
+    def __init__(self, cfg):
+        super(LatentMoEDetect, self).__init__(cfg)
+        moe_cfg = getattr(cfg, "LatentMoE", None)
+        self.num_experts = max(1, int(getattr(moe_cfg, "num_experts", 4)))
+        self.top_k = int(getattr(moe_cfg, "top_k", 2))
+        self.temperature = float(getattr(moe_cfg, "temperature", 1.0))
+        self.moe_scale = float(getattr(moe_cfg, "scale", 1.0))
+        self.last_router_probs = []
+
+        ch = [int(out_c * cfg.Model.width_multiple) for out_c in cfg.Model.Neck.out_channels]
+        self.router = nn.ModuleList(nn.Conv2d(c, self.num_experts, 1) for c in ch)
+        self.expert_m = nn.ModuleList(
+            nn.ModuleList(nn.Conv2d(c, self.no * self.na, 1) for _ in range(self.num_experts))
+            for c in ch
+        )
+
+        # Start as the base detector. The MoE branch then learns only corrections.
+        for router in self.router:
+            nn.init.zeros_(router.weight)
+            nn.init.zeros_(router.bias)
+        for level_experts in self.expert_m:
+            for conv in level_experts:
+                nn.init.zeros_(conv.weight)
+                nn.init.zeros_(conv.bias)
+
+    def _router_probs(self, feature, level_idx):
+        logits = self.router[level_idx](feature) / max(self.temperature, 1e-6)
+        probs = torch.softmax(logits, dim=1)
+        if (not self.training) and 0 < self.top_k < self.num_experts:
+            _, indices = probs.topk(self.top_k, dim=1)
+            mask = torch.zeros_like(probs).scatter_(1, indices, 1.0)
+            probs = probs * mask
+            probs = probs / probs.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        return probs
+
+    def _moe_output(self, level_idx, feature):
+        probs = self._router_probs(feature, level_idx)
+        if self.training:
+            self.last_router_probs.append(probs)
+        residual = None
+        for expert_idx, conv in enumerate(self.expert_m[level_idx]):
+            expert_out = conv(feature) * probs[:, expert_idx:expert_idx + 1]
+            residual = expert_out if residual is None else residual + expert_out
+        return residual
+
+    def forward(self, x):
+        self.last_router_probs = []
+        z = []
+        list_x = []
+        for _ in x:
+            list_x.append(_)
+        x = list_x
+        class_range = list(range(5 + self.nc))
+        for i in range(self.nl):
+            feature = x[i]
+            x[i] = self.m[i](feature) + self.moe_scale * self._moe_output(i, feature)
+
+            bs, _, ny, nx = x[i].shape
+            if hasattr(self, 'export') and self.export:
+                x[i] = x[i].view(bs, self.na, self.no, -1).permute(0, 1, 3, 2)
+                if self.class_skew_enabled and self.use_residual:
+                    residual = self.residual_m[i](feature).view(bs, self.na, self.nc, -1).permute(0, 1, 3, 2).contiguous()
+                    x[i][..., 5:5 + self.nc] = x[i][..., 5:5 + self.nc] + residual
+                z.append(x[i])
+                continue
+
+            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+            if self.class_skew_enabled and self.use_residual:
+                residual = self.residual_m[i](feature).view(bs, self.na, self.nc, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+                x[i][..., 5:5 + self.nc] = x[i][..., 5:5 + self.nc] + residual
+
+            if not self.training:
+                if self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                    self.grid[i], self.anchor_grid[i] = self._make_grid_old(nx, ny, i)
+
+                y = torch.full_like(x[i], 0)
+                self.anchor_grid[i] = self.anchor_grid[i].to(x[i].device)
+                y[..., class_range] = x[i][..., class_range].sigmoid()
+                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i].to(x[i].device)) * self.stride[i]
+                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]
+
+                z.append(y.view(bs, -1, self.no))
+
+        if hasattr(self, 'export') and self.export:
+            return z
+
+        return x if self.training else (torch.cat(z, 1), x)

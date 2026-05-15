@@ -136,7 +136,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
 
 def generate_round_pseudo_labels(
     setup,
-    teacher: Path,
+    teacher: Path | list[Path],
     args: argparse.Namespace,
     clients: list[dict[str, Any]],
     round_idx: int,
@@ -146,14 +146,20 @@ def generate_round_pseudo_labels(
     if args.force_pseudo and pseudo_root.exists():
         shutil.rmtree(pseudo_root)
 
+    pseudo_imgsz = int(getattr(args, "pseudo_imgsz", 0) or args.imgsz)
     labeler = pl02.StableAugPseudoLabeler(
         weights=teacher,
         device=args.device,
-        imgsz=args.imgsz,
+        imgsz=pseudo_imgsz,
         conf_thres=args.conf_thres,
         iou_thres=args.nms_iou_thres,
         max_det=args.max_det,
+        separate_weight_views=getattr(args, "pseudo_teacher_separate_model_views", False),
     )
+    if isinstance(teacher, (list, tuple)):
+        teacher_display = [str(Path(path).expanduser().resolve()) for path in teacher]
+    else:
+        teacher_display = str(teacher.expanduser().resolve())
 
     stats_rows: list[dict[str, Any]] = []
     all_client_stats: dict[str, Any] = {}
@@ -171,6 +177,7 @@ def generate_round_pseudo_labels(
                 predictions,
                 match_iou=args.match_iou,
                 min_views=args.min_views,
+                min_models=getattr(args, "min_models", 0),
                 min_stability=args.min_stability,
                 min_score=args.min_score,
                 max_boxes_per_image=args.max_boxes_per_image,
@@ -243,7 +250,7 @@ def generate_round_pseudo_labels(
         client_stats = {
             "round": round_tag,
             "client": client_tag,
-            "teacher": str(teacher.resolve()),
+            "teacher": teacher_display,
             "source_images_scanned": len(images),
             "pseudo_images_kept": len(list_images),
             "pseudo_boxes_kept": int(sum(class_counts.values())),
@@ -293,13 +300,16 @@ def generate_round_pseudo_labels(
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": PROTOCOL_VERSION,
         "round": round_tag,
-        "teacher": str(teacher.resolve()),
+        "teacher": teacher_display,
         "params": {
             "imgsz": args.imgsz,
+            "pseudo_imgsz": pseudo_imgsz,
             "conf_thres": args.conf_thres,
             "nms_iou_thres": args.nms_iou_thres,
             "match_iou": args.match_iou,
             "min_views": args.min_views,
+            "min_models": getattr(args, "min_models", 0),
+            "pseudo_teacher_separate_model_views": getattr(args, "pseudo_teacher_separate_model_views", False),
             "min_stability": args.min_stability,
             "min_score": args.min_score,
             "max_boxes_per_image": args.max_boxes_per_image,

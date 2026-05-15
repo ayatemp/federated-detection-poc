@@ -245,6 +245,8 @@ def run_evaluation(args: argparse.Namespace, records: list[dict[str, str]]) -> N
         args.eval_splits,
         "--batch-size",
         str(args.val_batch_size),
+        "--imgsz",
+        str(getattr(args, "imgsz", 640)),
     ]
     if args.device:
         cmd.extend(["--device", args.device])

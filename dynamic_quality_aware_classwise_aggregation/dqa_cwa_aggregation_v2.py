@@ -10,6 +10,7 @@ anchor and applies quality-weighted client residuals on top of it.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -30,6 +31,9 @@ from dqa_cwa_aggregation import (  # re-exported for the existing runner API
 class AggregationConfig(v1.AggregationConfig):
     min_server_alpha: float = 0.45
     residual_blend: float | None = None
+    moe_expert_blend: float = 0.0
+    moe_router_blend: float = 0.0
+    bn_blend: float = 0.0
 
     def validate(self) -> None:
         super().validate()
@@ -37,12 +41,193 @@ class AggregationConfig(v1.AggregationConfig):
             raise ValueError(f"min_server_alpha must be in [0, 1], got {self.min_server_alpha}")
         if self.residual_blend is not None and not 0.0 <= self.residual_blend <= 1.0:
             raise ValueError(f"residual_blend must be in [0, 1], got {self.residual_blend}")
+        if not 0.0 <= self.moe_expert_blend <= 1.0:
+            raise ValueError(f"moe_expert_blend must be in [0, 1], got {self.moe_expert_blend}")
+        if not 0.0 <= self.moe_router_blend <= 1.0:
+            raise ValueError(f"moe_router_blend must be in [0, 1], got {self.moe_router_blend}")
+        if not 0.0 <= self.bn_blend <= 1.0:
+            raise ValueError(f"bn_blend must be in [0, 1], got {self.bn_blend}")
+
+
+MOE_EXPERT_RE = re.compile(r"(^|\.)head\.expert_m\.\d+\.(\d+)\.(weight|bias)$")
+MOE_ROUTER_RE = re.compile(r"(^|\.)head\.router\.\d+\.(weight|bias)$")
 
 
 def _client_residual_blend(config: AggregationConfig) -> float:
     if config.residual_blend is not None:
         return float(config.residual_blend)
     return min(float(config.classwise_blend), 0.35)
+
+
+def _normalise_expert_assignments(assignments: Sequence[Mapping[str, Any]] | None) -> list[dict[str, float]]:
+    normalised: list[dict[str, float]] = []
+    for item in assignments or []:
+        try:
+            target = int(item.get("target_expert", item.get("target", -1)))
+            weight = float(item.get("weight", item.get("specialization_weight", 0.0)))
+        except (TypeError, ValueError):
+            target, weight = -1, 0.0
+        if target < 0 or weight <= 0:
+            normalised.append({"target_expert": -1.0, "weight": 0.0})
+        else:
+            normalised.append({"target_expert": float(target), "weight": weight})
+    return normalised
+
+
+def _client_quality_weight(stat: ClientClassStats) -> float:
+    counts = torch.tensor(stat.counts, dtype=torch.float32)
+    qualities = torch.tensor(stat.mean_quality_scores, dtype=torch.float32).clamp_min(0.0)
+    total = float(counts.sum())
+    if total <= 0:
+        return 0.0
+    quality = float((counts * qualities).sum() / torch.clamp(counts.sum(), min=EPS))
+    # Count is useful as a confidence gate, but saturates quickly so large
+    # pseudoGT clients do not erase smaller client/domain specialists.
+    count_gate = min(1.0, total / 700.0)
+    return max(0.0, quality * count_gate)
+
+
+def _normalise_bn_weights(
+    stats: Sequence[ClientClassStats],
+    expert_assignments: Sequence[Mapping[str, Any]] | None,
+) -> list[float]:
+    assignment_weights = _normalise_expert_assignments(expert_assignments)
+    weights: list[float] = []
+    for idx, stat in enumerate(stats):
+        quality_weight = _client_quality_weight(stat)
+        assignment_weight = 1.0
+        if idx < len(assignment_weights):
+            assignment_weight = max(float(assignment_weights[idx].get("weight", 0.0)), 0.0)
+        weights.append(quality_weight * assignment_weight)
+
+    total = sum(weights)
+    if total <= EPS:
+        weights = [_client_quality_weight(stat) for stat in stats]
+        total = sum(weights)
+    if total <= EPS:
+        return []
+    return [weight / total for weight in weights]
+
+
+def apply_dynamic_batchnorm_residuals(
+    anchored: dict[str, torch.Tensor],
+    client_state_dicts: Sequence[Mapping[str, torch.Tensor]],
+    server_state_dict: Mapping[str, torch.Tensor],
+    stats: Sequence[ClientClassStats],
+    expert_assignments: Sequence[Mapping[str, Any]] | None,
+    config: AggregationConfig,
+) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
+    """Blend client/domain BN statistics into the server anchor with DQA weights.
+
+    FedBN says BN statistics carry feature-shift information and should not be
+    blindly averaged.  Here we keep the server as the default detector and only
+    inject a small DQA-gated residual from the clients whose pseudoGT evidence
+    is stable enough to specialize router/expert state for the round.
+    """
+
+    if config.bn_blend <= 0:
+        return anchored, {}
+    weights = _normalise_bn_weights(stats, expert_assignments)
+    if not weights or len(weights) != len(client_state_dicts):
+        return anchored, {"skipped": "no_valid_bn_weights"}
+
+    result = dict(anchored)
+    updated_keys = 0
+    for key, server_value in server_state_dict.items():
+        if not v1._is_batchnorm_key(key):
+            continue
+        if not torch.is_tensor(server_value) or not server_value.dtype.is_floating_point:
+            continue
+        server_float = server_value.float()
+        client_average = torch.zeros_like(server_float)
+        for state, weight in zip(client_state_dicts, weights):
+            client_average = client_average + state[key].float() * float(weight)
+        blended = (1.0 - float(config.bn_blend)) * server_float + float(config.bn_blend) * client_average
+        result[key] = blended.to(server_value.dtype)
+        updated_keys += 1
+
+    diagnostics = {
+        "updated_keys": updated_keys,
+        "blend": float(config.bn_blend),
+        "weights": weights,
+    }
+    return result, diagnostics
+
+
+def apply_dynamic_moe_expert_residuals(
+    anchored: dict[str, torch.Tensor],
+    client_state_dicts: Sequence[Mapping[str, torch.Tensor]],
+    server_state_dict: Mapping[str, torch.Tensor],
+    expert_assignments: Sequence[Mapping[str, Any]] | None,
+    config: AggregationConfig,
+) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
+    """Aggregate latent-MoE expert/router residuals with DQA-gated expert ownership.
+
+    The shared detector can remain server-anchored while each explicit MoE expert
+    receives residuals only from clients routed to that expert. This is the
+    FedMoX-like part: specialists are learned locally, then mixed according to
+    the DQA quality of the pseudoGT that produced them.
+    """
+
+    if config.moe_expert_blend <= 0 and config.moe_router_blend <= 0:
+        return anchored, {}
+    assignments = _normalise_expert_assignments(expert_assignments)
+    if len(assignments) != len(client_state_dicts):
+        return anchored, {"skipped": "assignment_count_mismatch"}
+
+    result = dict(anchored)
+    expert_counts: dict[str, int] = {}
+    expert_weight_sums: dict[str, float] = {}
+    router_weight_sum = 0.0
+
+    for key, server_value in server_state_dict.items():
+        if not torch.is_tensor(server_value) or not server_value.dtype.is_floating_point:
+            continue
+
+        expert_match = MOE_EXPERT_RE.search(key)
+        router_match = MOE_ROUTER_RE.search(key)
+        if expert_match and config.moe_expert_blend > 0:
+            expert_idx = int(expert_match.group(2))
+            selected: list[tuple[Mapping[str, torch.Tensor], float]] = [
+                (state, float(item["weight"]))
+                for state, item in zip(client_state_dicts, assignments)
+                if int(item["target_expert"]) == expert_idx and float(item["weight"]) > 0
+            ]
+            if not selected:
+                continue
+            total_weight = sum(weight for _, weight in selected)
+            if total_weight <= 0:
+                continue
+            server_float = server_value.float()
+            residual = torch.zeros_like(server_float)
+            for state, weight in selected:
+                residual = residual + (state[key].float() - server_float) * (weight / total_weight)
+            result[key] = (server_float + float(config.moe_expert_blend) * residual).to(server_value.dtype)
+            expert_key = str(expert_idx)
+            expert_counts[expert_key] = expert_counts.get(expert_key, 0) + 1
+            expert_weight_sums[expert_key] = expert_weight_sums.get(expert_key, 0.0) + total_weight
+        elif router_match and config.moe_router_blend > 0:
+            weighted = [
+                (state, float(item["weight"]))
+                for state, item in zip(client_state_dicts, assignments)
+                if int(item["target_expert"]) >= 0 and float(item["weight"]) > 0
+            ]
+            total_weight = sum(weight for _, weight in weighted)
+            if total_weight <= 0:
+                continue
+            server_float = server_value.float()
+            residual = torch.zeros_like(server_float)
+            for state, weight in weighted:
+                residual = residual + (state[key].float() - server_float) * (weight / total_weight)
+            result[key] = (server_float + float(config.moe_router_blend) * residual).to(server_value.dtype)
+            router_weight_sum += total_weight
+
+    diagnostics = {
+        "expert_counts": expert_counts,
+        "expert_weight_sums": expert_weight_sums,
+        "router_weight_sum": router_weight_sum,
+    }
+    return result, diagnostics
 
 
 def _enforce_server_floor(
@@ -162,6 +347,7 @@ def aggregate_checkpoints(
     state_path: Path | None,
     config: AggregationConfig,
     repo_root: Path,
+    expert_assignments: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Aggregate checkpoints with server-anchored DQA-CWA v2."""
 
@@ -187,6 +373,21 @@ def aggregate_checkpoints(
         residual_blend=_client_residual_blend(config),
         localize_bn=config.localize_bn,
     )
+    base_state, bn_diagnostics = apply_dynamic_batchnorm_residuals(
+        base_state,
+        client_state_dicts,
+        server_state_dict,
+        stats,
+        expert_assignments,
+        config,
+    )
+    base_state, moe_diagnostics = apply_dynamic_moe_expert_residuals(
+        base_state,
+        client_state_dicts,
+        server_state_dict,
+        expert_assignments,
+        config,
+    )
     dynamic = apply_dynamic_classwise_head(base_state, client_state_dicts, server_state_dict, alpha, active, config)
     v1._replace_model_state(base, dynamic, "model")
 
@@ -200,6 +401,21 @@ def aggregate_checkpoints(
                 residual_blend=_client_residual_blend(config),
                 localize_bn=config.localize_bn,
             )
+            ema_base, _ = apply_dynamic_batchnorm_residuals(
+                ema_base,
+                ema_client_dicts,
+                server_ema,
+                stats,
+                expert_assignments,
+                config,
+            )
+            ema_base, _ = apply_dynamic_moe_expert_residuals(
+                ema_base,
+                ema_client_dicts,
+                server_ema,
+                expert_assignments,
+                config,
+            )
             ema_dynamic = apply_dynamic_classwise_head(ema_base, ema_client_dicts, server_ema, alpha, active, config)
             v1._replace_model_state(base, ema_dynamic, "ema")
 
@@ -211,6 +427,9 @@ def aggregate_checkpoints(
     state["last_sources"] = source_ids
     state["last_alpha"] = alpha.tolist()
     state["last_active_classes"] = [bool(x) for x in active.tolist()]
+    state["last_moe_expert_assignments"] = _normalise_expert_assignments(expert_assignments)
+    state["last_moe_diagnostics"] = moe_diagnostics
+    state["last_bn_diagnostics"] = bn_diagnostics
     save_state(state_path, state)
     return output_checkpoint, state
 

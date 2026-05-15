@@ -34,7 +34,13 @@ from utils.plots import plot_labels
 from utils.torch_utils import ModelEMA, de_parallel, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.metrics import MetricMeter, fitness
 from utils.loggers import Loggers
-from utils.fedsto_regularization import apply_fedsto_train_scope, class_skew_head_regularization, spectral_orthogonal_regularization
+from utils.fedsto_regularization import (
+    apply_fedsto_train_scope,
+    class_skew_head_regularization,
+    clear_latent_moe_router_cache,
+    latent_moe_router_regularization,
+    spectral_orthogonal_regularization,
+)
 # from ..val import run # for end-of-epoch mAP
 from contextlib import redirect_stdout
 import torch.distributed as dist
@@ -155,9 +161,12 @@ class Trainer:
                 print(f'freezing {k}')
                 v.requires_grad = False
         apply_fedsto_train_scope(self.model, cfg.FedSTO.train_scope)
+        clear_latent_moe_router_cache(self.model)
         
           # EMA
-        self.ema = ModelEMA(self.model) if self.RANK in [-1, 0] else None
+        ema_decay = float(getattr(cfg.SSOD, "ema_rate", 0.999)) if hasattr(cfg, "SSOD") else 0.999
+        ema_ramp = bool(getattr(cfg.SSOD, "cosine_ema", True)) if hasattr(cfg, "SSOD") else True
+        self.ema = ModelEMA(self.model, decay=ema_decay, ramp=ema_ramp) if self.RANK in [-1, 0] else None
 
         # Resume
         self.start_epoch = 0
@@ -174,7 +183,7 @@ class Trainer:
             # EMA
             if self.ema and ckpt.get('ema'):
                 try:
-                    self.ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+                    self.ema.ema.load_state_dict(ckpt['ema'].float().state_dict(), strict=False)
                     self.ema.updates = ckpt['updates']
                 except:
                     LOGGER.info('pretrain model with different type of ema')
@@ -398,7 +407,17 @@ class Trainer:
         )
         if class_skew_loss is not None:
             loss = loss + class_skew_loss
+        latent_moe_loss = latent_moe_router_regularization(
+            self.model,
+            self.cfg.LatentMoE.balance_weight,
+            self.cfg.LatentMoE.entropy_weight,
+            getattr(self.cfg.LatentMoE, "specialization_weight", 0.0),
+            getattr(self.cfg.LatentMoE, "specialization_target", -1),
+        )
+        if latent_moe_loss is not None:
+            loss = loss + latent_moe_loss
         self.scaler.scale(loss).backward()
+        clear_latent_moe_router_cache(self.model)
                 
         self.accumulate = max(round(64 / self.batch_size), 1) 
 

@@ -3,6 +3,9 @@
 Experimental modules
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -82,14 +85,159 @@ class Ensemble(nn.ModuleList):
             y.append(module(x, augment, profile)[0])
         # y = torch.stack(y).max(0)[0]  # max ensemble
         # y = torch.stack(y).mean(0)  # mean ensemble
-        print(y)
         y = torch.cat(y, 1)  # nms ensemble
         return y, None  # inference, train output
+
+
+class ScaledEnsemble(nn.ModuleList):
+    # Ensemble that calibrates each member by scaling objectness before NMS.
+    def __init__(self, scales):
+        super().__init__()
+        self.scales = [float(scale) for scale in scales]
+
+    def forward(self, x, augment=False, profile=False, visualize=False):
+        y = []
+        for module, scale in zip(self, self.scales):
+            try:
+                pred = module(x, augment, profile, visualize)[0]
+            except TypeError:
+                pred = module(x, augment, profile)[0]
+            if scale != 1.0 and pred.shape[-1] > 4:
+                pred = pred.clone()
+                pred[..., 4] = (pred[..., 4] * scale).clamp(0, 1)
+            y.append(pred)
+        return torch.cat(y, 1), None
+
+
+class BrightnessRoutedEnsemble(nn.Module):
+    # Route each image to a day or night model-level ensemble from a JSON spec.
+    def __init__(self, spec, device=None, inplace=True, fuse=True):
+        super().__init__()
+        threshold = float(spec.get('threshold', 0.34))
+        groups = spec.get('groups') or {}
+        if not groups or 'day' not in groups or 'night' not in groups:
+            raise ValueError('BrightnessRoutedEnsemble requires day and night groups')
+        self.threshold = threshold
+        self.mode = spec.get('mode', 'hard')
+        self.primary_scale = float(spec.get('primary_scale', 1.0))
+        self.leak = float(spec.get('leak', 0.0))
+        self.night_gain = float(spec.get('night_gain', 1.0))
+        self.night_gamma = float(spec.get('night_gamma', 1.0))
+        group_scales = spec.get('group_scales') or {}
+        self.group_names = ['day', 'night']
+        self.groups = nn.ModuleDict(
+            {
+                name: load_scaled_ensemble(
+                    [str(path) for path in groups[name]],
+                    group_scales[name],
+                    device=device,
+                    inplace=inplace,
+                    fuse=fuse,
+                )
+                if name in group_scales
+                else attempt_load([str(path) for path in groups[name]], device=device, inplace=inplace, fuse=fuse)
+                for name in self.group_names
+            }
+        )
+        first = self.groups[self.group_names[0]]
+        for key in 'names', 'nc':
+            setattr(self, key, getattr(first, key))
+        self.yaml = getattr(first, 'yaml', {})
+        self.stride = first.stride
+
+    @staticmethod
+    def _prediction(output):
+        while isinstance(output, (tuple, list)):
+            output = output[0]
+        return output
+
+    @staticmethod
+    def _pad_prediction(pred, max_boxes):
+        if pred.shape[0] >= max_boxes:
+            return pred
+        pad = torch.zeros(
+            (max_boxes - pred.shape[0], pred.shape[1]),
+            device=pred.device,
+            dtype=pred.dtype,
+        )
+        return torch.cat((pred, pad), dim=0)
+
+    @staticmethod
+    def _scale_objectness(pred, scale):
+        if scale == 1.0 or pred.shape[-1] <= 4:
+            return pred
+        pred = pred.clone()
+        pred[..., 4] = (pred[..., 4] * scale).clamp(0, 1)
+        return pred
+
+    def _input_for_group(self, x, name):
+        if name != 'night' or (self.night_gain == 1.0 and self.night_gamma == 1.0):
+            return x
+        enhanced = x.clamp(0, 1)
+        if self.night_gamma != 1.0:
+            enhanced = enhanced.pow(self.night_gamma)
+        if self.night_gain != 1.0:
+            enhanced = (enhanced * self.night_gain).clamp(0, 1)
+        return enhanced
+
+    def forward(self, x, augment=False, profile=False, visualize=False):
+        brightness = x.float().mean(dim=(1, 2, 3))
+        route_night = brightness < self.threshold
+        predictions = {}
+        max_boxes = {}
+        for name, model in self.groups.items():
+            group_input = self._input_for_group(x, name)
+            try:
+                output = model(group_input, augment, profile, visualize)
+            except TypeError:
+                output = model(group_input, augment, profile)
+            pred = self._prediction(output)
+            predictions[name] = pred
+            max_boxes[name] = pred.shape[1]
+
+        selected = []
+        for index in range(x.shape[0]):
+            primary_name = 'night' if bool(route_night[index]) else 'day'
+            if self.mode == 'soft_leak' and self.leak > 0:
+                parts = []
+                for name in self.group_names:
+                    scale = self.primary_scale if name == primary_name else self.leak
+                    pred = self._scale_objectness(predictions[name][index], scale)
+                    parts.append(self._pad_prediction(pred, max_boxes[name]))
+                pred = torch.cat(parts, dim=0)
+            else:
+                pred = self._pad_prediction(predictions[primary_name][index], max(max_boxes.values()))
+            selected.append(pred)
+        return torch.stack(selected, dim=0), None
+
+
+def load_scaled_ensemble(paths, scales, device=None, inplace=True, fuse=True):
+    if len(paths) != len(scales):
+        raise ValueError(f'Scale count must match paths: {len(scales)} != {len(paths)}')
+    model = ScaledEnsemble(scales)
+    for path in paths:
+        model.append(attempt_load(path, device=device, inplace=inplace, fuse=fuse))
+    first = model[0]
+    for key in 'names', 'nc':
+        setattr(model, key, getattr(first, key))
+    model.yaml = getattr(first, 'yaml', {})
+    model.stride = first.stride
+    assert all(first.nc == module.nc for module in model), f'Models have different class counts: {[module.nc for module in model]}'
+    return model
 
 
 def attempt_load(weights, device=None, inplace=True, fuse=True):
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     from models.detector.yolo import Detect, Model
+
+    if isinstance(weights, (str, Path)) and str(weights).endswith('.routed.json'):
+        with Path(weights).open(encoding='utf-8') as f:
+            spec = json.load(f)
+        model = BrightnessRoutedEnsemble(spec, device=device, inplace=inplace, fuse=fuse)
+        print(f'Brightness routed ensemble created with {weights}\n')
+        return model
+    if isinstance(weights, list) and len(weights) == 1 and str(weights[0]).endswith('.routed.json'):
+        return attempt_load(weights[0], device=device, inplace=inplace, fuse=fuse)
 
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
@@ -121,8 +269,9 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
 
     # Return detection ensemble
     print(f'Ensemble created with {weights}\n')
-    for k in 'names', 'nc', 'yaml':
+    for k in 'names', 'nc':
         setattr(model, k, getattr(model[0], k))
+    model.yaml = getattr(model[0], 'yaml', {})
     model.stride = model[torch.argmax(torch.tensor([m.stride.max() for m in model])).int()].stride  # max stride
     assert all(model[0].nc == m.nc for m in model), f'Models have different class counts: {[m.nc for m in model]}'
     return model

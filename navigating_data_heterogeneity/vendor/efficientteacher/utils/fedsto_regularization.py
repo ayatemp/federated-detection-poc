@@ -1,14 +1,25 @@
+import math
+
 import torch
 
 
 def _parameter_in_scope(name, scope):
     lowered = name.lower()
+    is_bn = ".bn." in lowered or "batchnorm" in lowered
     if scope == "all":
         return True
     if scope == "non_backbone":
         return "backbone" not in lowered
     if scope == "neck_head":
         return ("neck" in lowered) or ("head" in lowered)
+    if scope == "bn":
+        return is_bn
+    if scope == "bn_moe_head":
+        return is_bn or ("head.router" in lowered) or ("head.expert_m" in lowered)
+    if scope == "moe_head":
+        return ("head.router" in lowered) or ("head.expert_m" in lowered)
+    if scope == "backbone_moe_head":
+        return ("backbone" in lowered) or ("head.router" in lowered) or ("head.expert_m" in lowered)
     return False
 
 
@@ -64,12 +75,25 @@ def apply_fedsto_train_scope(model, scope="all"):
 
     for name, param in model.named_parameters():
         lowered = name.lower()
+        is_bn = ".bn." in lowered or "batchnorm" in lowered
         if scope == "backbone":
             param.requires_grad = "backbone" in lowered
         elif scope == "non_backbone":
             param.requires_grad = "backbone" not in lowered
         elif scope == "neck_head":
             param.requires_grad = ("neck" in lowered) or ("head" in lowered)
+        elif scope == "bn":
+            param.requires_grad = is_bn
+        elif scope == "bn_moe_head":
+            param.requires_grad = is_bn or ("head.router" in lowered) or ("head.expert_m" in lowered)
+        elif scope == "moe_head":
+            param.requires_grad = ("head.router" in lowered) or ("head.expert_m" in lowered)
+        elif scope == "backbone_moe_head":
+            param.requires_grad = (
+                "backbone" in lowered
+                or ("head.router" in lowered)
+                or ("head.expert_m" in lowered)
+            )
         else:
             raise ValueError(f"Unsupported FedSTO.train_scope: {scope}")
 
@@ -131,3 +155,60 @@ def class_skew_head_regularization(
         first_param = next(base.parameters())
         return first_param.new_zeros(())
     return total / max(count, 1)
+
+
+def latent_moe_router_regularization(
+    model,
+    balance_weight=0.0,
+    entropy_weight=0.0,
+    specialization_weight=0.0,
+    specialization_target=-1,
+):
+    if balance_weight <= 0 and entropy_weight <= 0 and specialization_weight <= 0:
+        return None
+
+    base = _base_model(model)
+    head = getattr(base, "head", None)
+    probs_list = getattr(head, "last_router_probs", None)
+    if head is None or not probs_list:
+        return None
+
+    total = None
+    count = 0
+    for probs in probs_list:
+        probs = probs.float()
+        if probs.ndim != 4 or probs.shape[1] <= 1:
+            continue
+        num_experts = probs.shape[1]
+        importance = probs.mean(dim=(0, 2, 3))
+        layer_loss = probs.new_zeros(())
+
+        if balance_weight > 0:
+            target = importance.new_full((num_experts,), 1.0 / num_experts)
+            layer_loss = layer_loss + float(balance_weight) * num_experts * (importance - target).square().sum()
+
+        if entropy_weight > 0:
+            safe_probs = probs.clamp_min(1e-8)
+            entropy = -(safe_probs * safe_probs.log()).sum(dim=1).mean()
+            entropy = entropy / math.log(max(num_experts, 2))
+            layer_loss = layer_loss + float(entropy_weight) * (1.0 - entropy)
+
+        target_idx = int(specialization_target)
+        if specialization_weight > 0 and 0 <= target_idx < num_experts:
+            target_probs = probs[:, target_idx, :, :].clamp_min(1e-8)
+            layer_loss = layer_loss + float(specialization_weight) * (-target_probs.log().mean())
+
+        total = layer_loss if total is None else total + layer_loss
+        count += 1
+
+    if total is None:
+        first_param = next(base.parameters())
+        return first_param.new_zeros(())
+    return total / max(count, 1)
+
+
+def clear_latent_moe_router_cache(model) -> None:
+    base = _base_model(model)
+    head = getattr(base, "head", None)
+    if head is not None and hasattr(head, "last_router_probs"):
+        head.last_router_probs = []

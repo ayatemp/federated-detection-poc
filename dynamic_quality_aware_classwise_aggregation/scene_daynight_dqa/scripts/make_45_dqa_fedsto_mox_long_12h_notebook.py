@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Create notebook 45: 12-hour DQA-FedSTO-MoX long training."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import nbformat as nbf
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+NOTEBOOK = PROJECT_ROOT / "notebooks" / "45_dqa_fedsto_mox_long_12h.ipynb"
+
+
+def main() -> None:
+    NOTEBOOK.parent.mkdir(parents=True, exist_ok=True)
+    nb = nbf.v4.new_notebook()
+    nb["cells"] = [
+        nbf.v4.new_markdown_cell(
+            "# 45 DQA-FedSTO-MoX Long 12h\n\n"
+            "mAP0.6を狙うために、短期judgerではなく長めの二段階学習を行う。"
+            "既存の50 epoch warmupを読み込み、12時間枠に収めるため `18 + 12 = 30` FL rounds に圧縮する。\n\n"
+            "## 設計\n\n"
+            "- Phase 1: selective training。`backbone_moe_head` を低LRで動かし、pseudo labelで表現/routerをtargetへ寄せる。\n"
+            "- Phase 2: full + orthogonal training。`all` をさらに低LRで動かし、head/box/objectness/classを実際に育てる。\n"
+            "- local EMA pseudo labelerを使う。\n"
+            "- DQAでpseudo quality / class coverage / stabilityをゲートする。\n"
+            "- hybrid DQA routerでdomain/class expertを専門化する。\n"
+            "- 21の結果を踏まえ、DQA softmixはBN/MoEを弱く入れ、server anchorを残して崩壊を抑える。\n"
+            "- Discordには開始、進捗、終了を通知する。"
+        ),
+        nbf.v4.new_code_cell(
+            "from pathlib import Path\n"
+            "ROOT = Path('/app/Object_Detection')\n"
+            "SCRIPT = ROOT / 'dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/aggressive_dqamox/scripts/run_45_dqa_fedsto_mox_long_12h.py'\n"
+            "WORKSPACE = ROOT / 'dynamic_quality_aware_classwise_aggregation/scene_daynight_dqa/aggressive_dqamox/output/45_dqa_fedsto_mox_long_12h'\n"
+            "print(SCRIPT)\n"
+            "print(WORKSPACE)"
+        ),
+        nbf.v4.new_code_cell(
+            "import subprocess, sys\n"
+            "cmd = [\n"
+            "    sys.executable, str(SCRIPT),\n"
+            "    '--workspace-root', str(WORKSPACE),\n"
+            "    '--phase1-rounds', '18',\n"
+            "    '--phase2-rounds', '12',\n"
+            "    '--client-limit', '2200',\n"
+            "    '--imgsz', '640',\n"
+            "    '--pseudo-imgsz', '1152',\n"
+            "    '--batch-size', '80',\n"
+            "    '--val-batch-size', '32',\n"
+            "    '--workers', '48',\n"
+            "    '--gpus', '2',\n"
+            "    '--target-map50', '0.60',\n"
+            "]\n"
+            "print(' '.join(cmd))\n"
+            "subprocess.run(cmd, check=True)"
+        ),
+        nbf.v4.new_code_cell(
+            "report = WORKSPACE / '45_dqa_fedsto_mox_long_12h_report.md'\n"
+            "manifest = WORKSPACE / '45_dqa_fedsto_mox_long_12h_manifest.json'\n"
+            "metrics = WORKSPACE / 'stats/18_client_balanced_single_injection_dqamox_final_metrics.csv'\n"
+            "for path in [manifest, metrics, report]:\n"
+            "    print('\\n###', path)\n"
+            "    if path.exists():\n"
+            "        print(path.read_text(encoding='utf-8')[:5000])\n"
+            "    else:\n"
+            "        print('missing')"
+        ),
+    ]
+    nb["metadata"] = {
+        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "language_info": {"name": "python", "pygments_lexer": "ipython3"},
+    }
+    nbf.write(nb, NOTEBOOK)
+    print(f"wrote {NOTEBOOK}")
+
+
+if __name__ == "__main__":
+    main()

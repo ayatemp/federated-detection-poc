@@ -62,3 +62,14 @@ The active 02 notebook tests a FedSTO-style head-to-full DQA schedule:
 long Phase1 head/neck-only client adaptation followed by a short Phase2
 full-model low-LR burst.  It uses final-focused paper-protocol evaluation so a
 30+2 round pilot remains practical.
+
+## Current MoE Notebook
+
+```text
+notebooks/07_shared_soft_head_moe_dqa.ipynb
+```
+
+The active MoE direction is shared-detector soft Head-MoE.  It reuses the 03
+checkpoint as a strong shared trunk, learns route-specific head/neck deltas from
+counterfactual pseudoGT buckets, and evaluates several soft-router checkpoint
+mixtures against the same paper protocol.
