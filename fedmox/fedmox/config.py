@@ -27,8 +27,32 @@ class FedMoxPaperConfig:
     reg_pseudo_threshold: float = 0.02
     jitter_times: int = 10
     jitter_scale: float = 0.06
+    teacher_proposals: bool = False
+    pseudo_box_min_size: int | None = None
     fedprox_mu: float = 0.001
     fedsto_mu: float = 0.001
+    train_batch_size: int = 2
+    backbone_name: str = "ViT-Adapter-Small"
+    backbone_pretraining: str = "DINOv2 with adapter pre-trained on MS-COCO"
+    backbone_image_size: int = 518
+    backbone_patch_size: int = 14
+    backbone_embed_dim: int = 384
+    backbone_num_heads: int = 6
+    fpn_levels: int = 5
+    fpn_out_channels: int = 256
+    rpn_positive_iou_threshold: float = 0.7
+    rpn_negative_iou_threshold: float = 0.3
+    rpn_samples_per_image: int = 256
+    rpn_positive_fraction: float = 0.5
+    rpn_nms_iou_threshold: float = 0.7
+    rpn_pre_nms_topk: int = 2000
+    rpn_post_nms_topk: int = 1000
+    roi_positive_iou_threshold: float = 0.5
+    roi_negative_iou_threshold: float = 0.5
+    roi_samples_per_image: int = 512
+    roi_positive_fraction: float = 0.25
+    roi_add_gt_as_proposals: bool = True
+    mask_size: int = 28
 
     def experts_for_dataset(self, dataset: str) -> int:
         normalized = dataset.lower()

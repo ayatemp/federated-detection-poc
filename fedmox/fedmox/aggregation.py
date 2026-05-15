@@ -31,6 +31,9 @@ def fedavg(client_states: Sequence[StateDict], sample_counts: Sequence[int | flo
 
     averaged: dict[str, torch.Tensor] = {}
     for key in client_states[0].keys():
+        if not torch.is_floating_point(client_states[0][key]):
+            averaged[key] = client_states[0][key].detach().clone()
+            continue
         value = torch.zeros_like(client_states[0][key], dtype=torch.float32)
         for state, weight in zip(client_states, weights, strict=True):
             value = value + state[key].detach().to(dtype=torch.float32) * weight
@@ -52,6 +55,9 @@ def soft_mixture(
 
     mixed: dict[str, torch.Tensor] = {}
     for key in previous_server_state.keys():
+        if not torch.is_floating_point(previous_server_state[key]):
+            mixed[key] = aggregated_client_state[key].detach().clone()
+            continue
         server = previous_server_state[key].detach().to(dtype=torch.float32)
         client = aggregated_client_state[key].detach().to(dtype=torch.float32)
         value = alpha * server + (1.0 - alpha) * client
