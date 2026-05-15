@@ -13,13 +13,14 @@ The implementation is structured as a paper-faithful reproduction layer:
 - `fedmox/pssfl.py`: the PSSFL execution order from the supplementary algorithm.
 - `configs/`: BDD100K, SODA10M, and Cityscapes protocol facts from the paper.
 - `PAPER_TRACE.md`: line-by-line reproduction audit against the paper source.
+- `REPRODUCTION_AUDIT.md`: current honesty boundary for what is and is not reproduced.
 
 ## Quick Checks
 
 ```bash
 cd /app/Object_Detection
 PYTHONPATH=fedmox python fedmox/scripts/verify_paper_trace.py
-PYTHONPATH=fedmox pytest -q fedmox/tests
+PYTHONPATH=fedmox python fedmox/scripts/run_core_tests.py
 ```
 
 ## Reproduction Scope
