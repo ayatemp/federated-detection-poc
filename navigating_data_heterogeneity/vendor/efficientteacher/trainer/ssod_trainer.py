@@ -50,6 +50,7 @@ import torchvision
 import copy
 from utils.fedsto_regularization import (
     apply_fedsto_train_scope,
+    backbone_moe_router_regularization,
     class_skew_head_regularization,
     clear_latent_moe_router_cache,
     latent_moe_router_regularization,
@@ -1045,7 +1046,7 @@ class SSODTrainer(Trainer):
     def update_train_logger(self):
         for (imgs, targets, paths, _) in self.train_loader:  # batch -------------------------------------------------------------
             imgs = imgs.to(self.device, non_blocking=True).float() / self.norm_scale  # uint8 to float32, 0-255 to 0.0-1.0
-            with amp.autocast(enabled=self.cuda):
+            with torch.no_grad(), amp.autocast(enabled=self.cuda):
                 pred, sup_feats = self.model(imgs)  # forward
                 loss, loss_items = self.compute_loss(pred, targets.to(self.device))  # loss scaled by batch_size
                 if self.model_type in ['yolox', 'tal']:
@@ -1069,6 +1070,7 @@ class SSODTrainer(Trainer):
                 self.log_contents.append('fp_loc')
                 self.log_contents.append('pse_num')
                 self.log_contents.append('gt_num')
+        clear_latent_moe_router_cache(self.model)
         LOGGER.info(('\n' + '%10s' * len(self.log_contents)) % tuple(self.log_contents))
         
     
@@ -1131,6 +1133,7 @@ class SSODTrainer(Trainer):
                                            val_ssod=val_ssod,
                                            val_kp=self.cfg.Dataset.val_kp)
                 self.model.train()
+                self.maybe_freeze_bn_for_backbone_moe()
                 if (self.epoch >= self.cfg.hyp.burn_epochs):
                     self.results, maps, _, cls_thr = val.run(self.data_dict,
                                            batch_size=self.batch_size // self.WORLD_SIZE * 2,
@@ -1256,11 +1259,27 @@ class SSODTrainer(Trainer):
             self.model,
             self.cfg.LatentMoE.balance_weight,
             self.cfg.LatentMoE.entropy_weight,
+            getattr(self.cfg.LatentMoE, "sample_entropy_weight", 0.0),
             getattr(self.cfg.LatentMoE, "specialization_weight", 0.0),
             getattr(self.cfg.LatentMoE, "specialization_target", -1),
         )
         if latent_moe_loss is not None:
             loss = loss + latent_moe_loss
+        backbone_moe_loss = backbone_moe_router_regularization(
+            self.model,
+            self.cfg.BackboneMoE.balance_weight,
+            self.cfg.BackboneMoE.entropy_weight,
+            getattr(self.cfg.BackboneMoE, "sample_entropy_weight", 0.0),
+            self.cfg.BackboneMoE.z_loss_weight,
+            self.cfg.BackboneMoE.diversity_weight,
+            self.cfg.NeckMoE.balance_weight,
+            self.cfg.NeckMoE.entropy_weight,
+            getattr(self.cfg.NeckMoE, "sample_entropy_weight", 0.0),
+            self.cfg.NeckMoE.z_loss_weight,
+            self.cfg.NeckMoE.diversity_weight,
+        )
+        if backbone_moe_loss is not None:
+            loss = loss + backbone_moe_loss
         self.scaler.scale(loss).backward()
         clear_latent_moe_router_cache(self.model)
                 
@@ -1399,6 +1418,8 @@ class SSODTrainer(Trainer):
             return sup_pred, sup_feature, un_sup_pred, un_sup_feature
     
     def train_instance(self, imgs, targets, paths, unlabeled_imgs, unlabeled_imgs_ori, unlabeled_gt, unlabeled_paths, unlabeled_M, ni, pbar, callbacks):
+        if os.getenv("ET_DETECT_ANOMALY", "").strip().lower() in {"1", "true", "yes", "on"}:
+            torch.autograd.set_detect_anomaly(True)
         n_img, _, _, _ = imgs.shape
         n_pse_img, _,_,_ = unlabeled_imgs.shape
         invalid_target_shape = True

@@ -1,0 +1,11 @@
+dataset = "Cityscapes"
+split_style = "domain_generalization_by_city"
+classes = ["Person", "Rider", "Car", "Truck", "Bus", "Train", "Motorcycle", "Bicycle"]
+server_labeled_images = 2000
+client_unlabeled_images = 18000
+test_images = 500
+server_cities = 18
+client_cities = 23
+test_cities = 3
+moe_experts = 3
+metric = "mAP@50"

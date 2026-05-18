@@ -1,0 +1,24 @@
+dataset = "BDD100K"
+server_domain = "Cloudy"
+client_domains = ["Overcast", "Rainy", "Snowy"]
+classes = ["Pedestrian", "Car", "Bus", "Truck", "Traffic signs"]
+server_labeled_images = 2000
+moe_experts = 4
+metric = "mAP@50"
+
+[client_unlabeled_images_by_domain]
+Overcast = 5000
+Rainy = 5000
+Snowy = 8000
+
+[test_images_by_domain]
+Cloudy = 300
+Overcast = 600
+Rainy = 300
+Snowy = 300
+
+[clients.n3]
+per_domain = 1
+
+[clients.n9]
+per_domain = 3

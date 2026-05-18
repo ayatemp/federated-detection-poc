@@ -14,6 +14,7 @@ class FedMoxPaperConfig:
     server_epochs_per_round: int = 1
     client_epochs_per_round: int = 1
     client_sampling_ratio: float = 0.33
+    soft_mixture_alpha: float | None = None
     server_resolution: tuple[int, int] = (1280, 720)
     client_resolution: tuple[int, int] = (640, 360)
     optimizer: str = "AdamW"

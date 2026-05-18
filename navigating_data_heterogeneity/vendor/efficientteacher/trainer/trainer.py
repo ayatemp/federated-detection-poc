@@ -36,6 +36,7 @@ from utils.metrics import MetricMeter, fitness
 from utils.loggers import Loggers
 from utils.fedsto_regularization import (
     apply_fedsto_train_scope,
+    backbone_moe_router_regularization,
     class_skew_head_regularization,
     clear_latent_moe_router_cache,
     latent_moe_router_regularization,
@@ -322,14 +323,15 @@ class Trainer:
          # DDP mode
         if self.cuda and self.RANK != -1:
             # print("Set DDP mode")
-            self.model = DDP(self.model, device_ids=[self.LOCAL_RANK], output_device=self.LOCAL_RANK, find_unused_parameters=True)
+            find_unused = bool(getattr(cfg, "find_unused_parameters", True))
+            self.model = DDP(self.model, device_ids=[self.LOCAL_RANK], output_device=self.LOCAL_RANK, find_unused_parameters=find_unused)
       
         # cfg.hyp.label_smoothing = opt.label_smoothing
         self.model.nc = self.nc  # attach number of classes to model
         self.model.class_weights = labels_to_class_weights(self.dataset.labels, self.nc).to(device) * self.nc  # attach class weights
         self.model.names = self.names
 
-        if cfg.Loss.type == 'ComputeLoss': 
+        if cfg.Loss.type == 'ComputeLoss':
             self.compute_loss = ComputeLoss(self.model, cfg)  # init loss class
         elif cfg.Loss.type == 'ComputeFastXLoss':
             self.compute_loss = ComputeFastXLoss(self.model, cfg)
@@ -344,6 +346,19 @@ class Trainer:
         else:
             self.detect = self.model.head
 
+    def maybe_freeze_bn_for_backbone_moe(self):
+        backbone_moe = getattr(self.cfg, "BackboneMoE", None)
+        neck_moe = getattr(self.cfg, "NeckMoE", None)
+        if not (
+            (backbone_moe is not None and bool(getattr(backbone_moe, "freeze_bn", False)))
+            or (neck_moe is not None and bool(getattr(neck_moe, "freeze_bn", False)))
+        ):
+            return
+        model = self.model.module if hasattr(self.model, "module") else self.model
+        for module in model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eval()
+
     def before_train(self):
         return 0
     
@@ -357,7 +372,7 @@ class Trainer:
     def update_train_logger(self):
         for (imgs, targets, paths, _) in self.train_loader:  # batch -------------------------------------------------------------
             imgs = imgs.to(self.device, non_blocking=True).float() / self.norm_scale  # uint8 to float32, 0-255 to 0.0-1.0
-            with amp.autocast(enabled=self.cuda):
+            with torch.no_grad(), amp.autocast(enabled=self.cuda):
                 pred = self.model(imgs)  # forward
                 loss, loss_items = self.compute_loss(pred, targets.to(self.device))  # loss scaled by batch_size
                 #TODO loss是否需要scale up需要进行讨论
@@ -365,10 +380,12 @@ class Trainer:
                 for loss_key in loss_items.keys():
                     self.log_contents.append(loss_key)
             break
+        clear_latent_moe_router_cache(self.model)
         LOGGER.info(('\n' + '%10s' * len(self.log_contents)) % tuple(self.log_contents))
     
     def before_epoch(self):
         self.model.train()
+        self.maybe_freeze_bn_for_backbone_moe()
         self.build_train_logger()
         self.update_train_logger()
 
@@ -411,11 +428,27 @@ class Trainer:
             self.model,
             self.cfg.LatentMoE.balance_weight,
             self.cfg.LatentMoE.entropy_weight,
+            getattr(self.cfg.LatentMoE, "sample_entropy_weight", 0.0),
             getattr(self.cfg.LatentMoE, "specialization_weight", 0.0),
             getattr(self.cfg.LatentMoE, "specialization_target", -1),
         )
         if latent_moe_loss is not None:
             loss = loss + latent_moe_loss
+        backbone_moe_loss = backbone_moe_router_regularization(
+            self.model,
+            self.cfg.BackboneMoE.balance_weight,
+            self.cfg.BackboneMoE.entropy_weight,
+            getattr(self.cfg.BackboneMoE, "sample_entropy_weight", 0.0),
+            self.cfg.BackboneMoE.z_loss_weight,
+            self.cfg.BackboneMoE.diversity_weight,
+            self.cfg.NeckMoE.balance_weight,
+            self.cfg.NeckMoE.entropy_weight,
+            getattr(self.cfg.NeckMoE, "sample_entropy_weight", 0.0),
+            self.cfg.NeckMoE.z_loss_weight,
+            self.cfg.NeckMoE.diversity_weight,
+        )
+        if backbone_moe_loss is not None:
+            loss = loss + backbone_moe_loss
         self.scaler.scale(loss).backward()
         clear_latent_moe_router_cache(self.model)
                 

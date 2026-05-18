@@ -9,6 +9,8 @@ The implementation is structured as a paper-faithful reproduction layer:
 - `fedmox/moe.py`: sparse top-1 MoE modules.
   - RPN-style feature maps use a spatial `1x1` convolution router.
   - ROI-style fixed vectors use a traditional linear top-1 router.
+  - These modules reproduce top-1 routing semantics, but the generic PyTorch
+    implementation still evaluates all experts before masking.
 - `fedmox/aggregation.py`: weighted FedAvg and FedMox Soft Mixture.
 - `fedmox/pssfl.py`: the PSSFL execution order from the supplementary algorithm.
 - `configs/`: BDD100K, SODA10M, and Cityscapes protocol facts from the paper.
@@ -21,6 +23,7 @@ The implementation is structured as a paper-faithful reproduction layer:
 cd /app/Object_Detection
 PYTHONPATH=fedmox python fedmox/scripts/verify_paper_trace.py
 PYTHONPATH=fedmox python fedmox/scripts/run_core_tests.py
+PYTHONPATH=fedmox python fedmox/scripts/score_reproduction.py
 ```
 
 ## Reproduction Scope
@@ -34,3 +37,5 @@ named by the paper: MMDetection, ViT-Adapter-Small/DINOv2, Soft Teacher, COALA,
 and the driving datasets. Because the paper does not publish an official code
 repository in the arXiv metadata, this repo keeps those integrations as explicit
 adapters rather than pretending an unverified MMDetection config is bit-identical.
+
+Current full-paper reproduction score is tracked in `REPRODUCTION_AUDIT.md`.

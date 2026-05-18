@@ -1,6 +1,52 @@
 import torch.nn as nn
 from ..backbone.common import Conv, Concat, C3
+from ..backbone.yolov5_backbone import DqaBackboneMoELevel
 from utils.general import make_divisible
+
+
+class DqaNeckAdapterMoE(nn.Module):
+    """Anonymous DQA-routed adapters for the PAN neck feature outputs."""
+
+    LEVEL_NAMES = ("p3", "p4", "p5")
+
+    def __init__(self, channels_by_level, moe_cfg, activation):
+        super().__init__()
+        enabled_levels = set(getattr(moe_cfg, "levels", ["p3", "p4", "p5"]))
+        self.levels = nn.ModuleDict()
+        for name in self.LEVEL_NAMES:
+            if name in enabled_levels:
+                self.levels[name] = DqaBackboneMoELevel(channels_by_level[name], moe_cfg, activation)
+
+    @property
+    def last_router_probs(self):
+        probs = []
+        for level in self.levels.values():
+            probs.extend(getattr(level, "last_router_probs", []))
+        return probs
+
+    @last_router_probs.setter
+    def last_router_probs(self, value):
+        for level in self.levels.values():
+            level.last_router_probs = []
+
+    @property
+    def last_router_logits(self):
+        logits = []
+        for level in self.levels.values():
+            logits.extend(getattr(level, "last_router_logits", []))
+        return logits
+
+    @last_router_logits.setter
+    def last_router_logits(self, value):
+        for level in self.levels.values():
+            level.last_router_logits = []
+
+    def forward(self, features):
+        outputs = []
+        for name, feature in zip(self.LEVEL_NAMES, features):
+            adapter = self.levels[name] if name in self.levels else None
+            outputs.append(adapter(feature) if adapter is not None else feature)
+        return tuple(outputs)
 
 
 class YoloV5Neck(nn.Module):
@@ -71,6 +117,18 @@ class YoloV5Neck(nn.Module):
         self.C4 = C3(self.output_p4 + int(self.input_p5/2), self.output_p5, self.get_depth(3), False, 1, 0.5, C_ACT) #23
 
         self.concat = Concat()
+        moe_cfg = getattr(cfg, "NeckMoE", None)
+        self.adapter_moe = None
+        if moe_cfg is not None and bool(getattr(moe_cfg, "enabled", False)):
+            self.adapter_moe = DqaNeckAdapterMoE(
+                {
+                    "p3": self.output_p3,
+                    "p4": self.output_p4,
+                    "p5": self.output_p5,
+                },
+                moe_cfg,
+                CONV_ACT,
+            )
 
         # print("PAN input channel size: P3 {}, P4 {}, P5 {}".format(self.input_p3, self.input_p4, self.input_p5))
         # print("PAN output channel size: PP3 {}, PP4 {}, PP5 {}".format(self.output_p3, self.output_p4, self.output_p5))
@@ -105,5 +163,7 @@ class YoloV5Neck(nn.Module):
         x4 = self.conv4(x3)
         x4 = self.concat([x4, xp_1])
         x4 = self.C4(x4) #23
-       
+
+        if self.adapter_moe is not None:
+            x2, x3, x4 = self.adapter_moe((x2, x3, x4))
         return x2, x3, x4 

@@ -66,7 +66,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def configure_setup(workspace: Path):
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
-    setup = importlib.import_module("setup_fedsto_exact_reproduction")
+    setup = importlib.import_module("setup_fedsto_paper_reproduction")
     setup.WORK_ROOT = workspace
     setup.LIST_ROOT = workspace / "data_lists"
     setup.CONFIG_ROOT = workspace / "configs"
@@ -78,7 +78,7 @@ def ensure_paper_eval_manifest(setup) -> dict:
     manifest = setup.build_data_lists()
     paper_eval = manifest.get("paper_evaluation")
     if not paper_eval:
-        raise RuntimeError("setup_fedsto_exact_reproduction.py did not produce paper_evaluation metadata.")
+        raise RuntimeError("setup_fedsto_paper_reproduction.py did not produce paper_evaluation metadata.")
     return paper_eval
 
 

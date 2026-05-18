@@ -1,0 +1,61 @@
+[bdd100k.n3.ours]
+cloudy = 0.468
+overcast = 0.492
+rainy = 0.483
+snowy = 0.493
+total = 0.486
+metric = "mAP@50"
+
+[bdd100k.n9.ours]
+cloudy = 0.465
+overcast = 0.486
+rainy = 0.478
+snowy = 0.462
+total = 0.475
+metric = "mAP@50"
+
+[soda10m.n3.ours]
+clear = 0.235
+overcast = 0.267
+rainy = 0.375
+total = 0.267
+metric = "mAP"
+
+[soda10m.n9.ours]
+clear = 0.223
+overcast = 0.263
+rainy = 0.382
+total = 0.261
+metric = "mAP"
+
+[cityscapes.n3.ours]
+total = 0.464
+metric = "mAP@50"
+
+[cityscapes.n9.ours]
+total = 0.455
+metric = "mAP@50"
+
+[scaling.bdd100k_r67_n9.ours]
+cloudy = 0.456
+overcast = 0.491
+rainy = 0.484
+snowy = 0.468
+total = 0.478
+metric = "mAP@50"
+
+[scaling.soda10m_n100.ours]
+clear = 0.220
+overcast = 0.261
+rainy = 0.374
+total = 0.258
+metric = "mAP"
+
+[ablation.bdd100k_n9_no_moe_no_sm]
+total = 0.448
+
+[ablation.bdd100k_n9_moe_no_sm]
+total = 0.467
+
+[ablation.bdd100k_n9_moe_sm]
+total = 0.475

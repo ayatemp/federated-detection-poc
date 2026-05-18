@@ -1,0 +1,24 @@
+dataset = "SODA10M"
+server_domain = "Clear"
+client_domains = ["Overcast", "Rainy"]
+classes = ["Pedestrian", "Cyclist", "Car", "Truck", "Tram", "Tricycle"]
+server_labeled_images = 2000
+moe_experts = 3
+metric = "mAP"
+
+[client_unlabeled_images_by_domain]
+Overcast = 10000
+Rainy = 8000
+
+[test_images_by_domain]
+Clear = 1000
+Overcast = 1000
+Rainy = 300
+
+[clients.n3]
+Overcast = 2
+Rainy = 1
+
+[clients.n9]
+Overcast = 6
+Rainy = 3

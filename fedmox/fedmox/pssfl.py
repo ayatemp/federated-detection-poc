@@ -75,8 +75,9 @@ class PSSFLRunner:
         *,
         client_ids: Sequence[int],
         config: FedMoxPaperConfig | None = None,
-        soft_mixture_alpha: float = 0.5,
+        soft_mixture_alpha: float | None = None,
         federated_key_filter: Callable[[str], bool] = default_task_head_key_filter,
+        freeze_backbone_on_init: bool = True,
         seed: int = 0,
     ) -> None:
         self.model = model
@@ -84,6 +85,7 @@ class PSSFLRunner:
         self.config = config or FedMoxPaperConfig()
         self.soft_mixture_alpha = soft_mixture_alpha
         self.federated_key_filter = federated_key_filter
+        self.frozen_backbone_parameters = freeze_backbone(model) if freeze_backbone_on_init else 0
         self.rng = random.Random(seed)
 
     def select_clients(self) -> list[int]:
@@ -112,7 +114,15 @@ class PSSFLRunner:
                 [update.state_dict for update in updates],
                 [update.sample_count for update in updates],
             )
-            mixed = soft_mixture(previous_server, aggregated, self.soft_mixture_alpha)
+            alpha = self.soft_mixture_alpha
+            if alpha is None:
+                alpha = self.config.soft_mixture_alpha
+            if alpha is None:
+                raise ValueError(
+                    "soft_mixture_alpha must be specified; the paper treats alpha as a hyperparameter "
+                    "and does not publish a single default value in the text"
+                )
+            mixed = soft_mixture(previous_server, aggregated, alpha)
             load_selected_state_dict(self.model, mixed)
             server_train(self.model, self.config.server_epochs_per_round)
         return self.model

@@ -38,6 +38,9 @@ class SpatialTop1MoE(nn.Module):
 
     FedMox uses a 1x1 convolution router to produce K x H x W routing maps,
     then activates only the top-1 expert at each spatial location.
+    This generic PyTorch module reproduces the hard top-1 output semantics, but
+    it still evaluates all experts before masking. A detector-specific sparse
+    dispatch kernel is required to reproduce the paper's FLOP claim exactly.
     """
 
     def __init__(
@@ -83,6 +86,8 @@ class Top1MoE(nn.Module):
 
     The supplementary material specifies a traditional router for the ROI head,
     where ROI features have a fixed dimension.
+    This generic implementation computes all experts before masking and should
+    be treated as semantic, not FLOP-level, reproduction.
     """
 
     def __init__(

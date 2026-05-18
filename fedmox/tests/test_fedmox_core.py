@@ -79,6 +79,8 @@ def test_pssfl_runner_updates_head_without_overwriting_backbone():
     model.backbone.weight.data.fill_(10.0)
     model.roi_head.weight.data.fill_(1.0)
     runner = PSSFLRunner(model, client_ids=[0, 1, 2], seed=0, soft_mixture_alpha=0.5)
+    assert runner.frozen_backbone_parameters == 1
+    assert model.backbone.weight.requires_grad is False
 
     def warmup_train(model, epochs):
         model.roi_head.weight.data.fill_(2.0)
@@ -95,3 +97,31 @@ def test_pssfl_runner_updates_head_without_overwriting_backbone():
     runner.run(warmup_train=warmup_train, client_train=client_train, server_train=server_train, rounds=1)
     assert torch.allclose(model.backbone.weight, torch.tensor([[10.0]]))
     assert not torch.allclose(model.roi_head.weight, torch.tensor([[2.0]]))
+
+
+def test_pssfl_runner_requires_explicit_alpha():
+    class TinyDetector(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.roi_head = nn.Linear(1, 1, bias=False)
+
+    model = TinyDetector()
+    runner = PSSFLRunner(model, client_ids=[0], seed=0)
+
+    def warmup_train(model, epochs):
+        pass
+
+    def client_train(client_id, state, epochs):
+        from fedmox import ClientUpdate
+
+        return ClientUpdate(client_id=client_id, sample_count=1, state_dict=state)
+
+    def server_train(model, epochs):
+        pass
+
+    try:
+        runner.run(warmup_train=warmup_train, client_train=client_train, server_train=server_train, rounds=1)
+    except ValueError as exc:
+        assert "soft_mixture_alpha must be specified" in str(exc)
+    else:
+        raise AssertionError("missing soft_mixture_alpha should fail")
